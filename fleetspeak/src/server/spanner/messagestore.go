@@ -597,10 +597,19 @@ func (d *Datastore) tryGetMessages(ctx context.Context, msgKeySet spanner.KeySet
 
 // GetMessageResult implements db.Store.
 func (d *Datastore) GetMessageResult(ctx context.Context, id common.MessageID) (*fspb.MessageResult, error) {
-	log.Error("----------- messagestore: GetMessageResult() called")
-	var ret *fspb.MessageResult
-
-	return ret, nil
+	log.Error("+++ messagestore: GetMessageResult() called")
+	var ret fspb.MessageResult
+	row, err := d.dbClient.Single().ReadRow(ctx, d.messages, spanner.Key{id.Bytes()}, []string{"Result"})
+	if err == nil {
+		err = row.Column(0, &ret)
+		if err != nil {
+			return nil, err
+		} else {
+			return &ret, nil
+		}
+	} else {
+		return nil, err
+	}
 }
 
 var errLimit = errors.New("limit reached")
@@ -787,6 +796,7 @@ func (d *Datastore) RegisterMessageProcessor(mp db.MessageProcessor) {
 	ctx := context.Background()
 	err := d.pubsubSub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
 		log.Infof("==== Got message: %q\n", string(msg.Data))
+
 		msg.Ack()
     })
 	if err != nil {
