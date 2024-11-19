@@ -245,7 +245,16 @@ func (d *Datastore) tryRemoveClientLabel(tr *spanner.ReadWriteTransaction, id co
 // BlacklistClient implements db.Store.
 func (d *Datastore) BlacklistClient(ctx context.Context, id common.ClientID) error {
 	log.Error("----------- clientstore: BlacklistClient() called")
-    return nil
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		return d.tryBlacklistClient(txn, id)
+	})
+	return err
+}
+
+func (d *Datastore) tryBlacklistClient(txn *spanner.ReadWriteTransaction, id common.ClientID) error {
+	ms := []*spanner.Mutation{spanner.Update(d.clients, []string{"ClientID", "Blacklisted"}, []interface{}{id.Bytes(), true})}
+	txn.BufferWrite(ms)
+	return nil
 }
 
 // RecordClientContact implements db.Store.
