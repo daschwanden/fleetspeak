@@ -283,10 +283,33 @@ func (d *Datastore) getPendingMessageRawIds(ctx context.Context, tx *sql.Tx, ids
 
 // GetPendingMessageCount implements db.MessageStore.
 func (d *Datastore) GetPendingMessageCount(ctx context.Context, ids []common.ClientID) (uint64, error) {
-	log.Error("----------- messagestore: GetPendingMessageCount() called")
+	log.Error("+++ messagestore: GetPendingMessageCount() called")
 	var result uint64
-
-	return result, nil
+	clientIds := make([][]byte, 0, len(ids))
+	for _, id := range ids {
+		clientIds = append(clientIds, id.Bytes())
+	}
+	stmt := spanner.Statement{
+		SQL: "SELECT " +
+		"  CAST(COUNT(*) as UINT64) Cnt " +
+		"FROM " +
+		"  ClientPendingMessages cpm " +
+		"WHERE " +
+		"  cpm.ClientId IN UNNEST(@idsBytes) ",
+		Params: map[string]interface{}{
+			"idsBytes": clientIds,
+		},
+	}
+	iter := d.dbClient.Single().Query(ctx, stmt)
+	defer iter.Stop()
+	row, err := iter.Next()
+	if err == nil {
+		err = row.ColumnByName("Cnt", &result)
+		if err == nil {
+			return result, nil
+		}
+	}
+	return 0, err
 }
 
 // GetPendingMessages implements db.MessageStore.
@@ -502,11 +525,11 @@ func (d *Datastore) tryStoreMessage(ctx context.Context, txn *spanner.ReadWriteT
 	return nil
 }
 
-func (d *Datastore) getMessages(ctx context.Context, tx *sql.Tx, ids []common.MessageID, wantData bool) ([]*fspb.Message, error) {
-	res := make([]*fspb.Message, 0, len(ids))
-
-	return res, nil
-}
+//func (d *Datastore) getMessages(ctx context.Context, tx *sql.Tx, ids []common.MessageID, wantData bool) ([]*fspb.Message, error) {
+//	res := make([]*fspb.Message, 0, len(ids))
+//
+//	return res, nil
+//}
 
 // GetMessages implements db.Store.
 func (d *Datastore) GetMessages(ctx context.Context, ids []common.MessageID, wantData bool) ([]*fspb.Message, error) {
