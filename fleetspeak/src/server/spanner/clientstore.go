@@ -222,15 +222,24 @@ func (d *Datastore) AddClientLabel(ctx context.Context, id common.ClientID, labe
 }
 
 func (d *Datastore) tryAddClientLabel(tr *spanner.ReadWriteTransaction, id common.ClientID, label *fspb.Label) error {
-	ms := []*spanner.Mutation{spanner.InsertOrUpdate(d.clientLabels, []string{"ClientID", "Label"}, []interface{}{id.Bytes(), label})}
+	ms := []*spanner.Mutation{spanner.InsertOrUpdate(d.clientLabels, []string{"ClientID", "ServiceName", "Label"}, []interface{}{id.Bytes(), label.ServiceName, label.Label})}
 	tr.BufferWrite(ms)
 	return nil
 }
 
 // RemoveClientLabel implements db.Store.
-func (d *Datastore) RemoveClientLabel(ctx context.Context, id common.ClientID, l *fspb.Label) error {
-	log.Error("----------- clientstore: RemoveClientLabel() called")
-    return nil
+func (d *Datastore) RemoveClientLabel(ctx context.Context, id common.ClientID, label *fspb.Label) error {
+	log.Error("+++ clientstore: RemoveClientLabel() called")
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		return d.tryRemoveClientLabel(txn, id, label)
+	})
+    return err
+}
+
+func (d *Datastore) tryRemoveClientLabel(tr *spanner.ReadWriteTransaction, id common.ClientID, label *fspb.Label) error {
+	ms := []*spanner.Mutation{spanner.Delete(d.clientLabels, spanner.Key{id.Bytes(), label.ServiceName, label.Label})}
+	tr.BufferWrite(ms)
+	return nil
 }
 
 // BlacklistClient implements db.Store.
