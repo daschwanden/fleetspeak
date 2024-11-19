@@ -31,7 +31,7 @@ import (
 
 // StoreFile implements db.FileStore.
 func (d *Datastore) StoreFile(ctx context.Context, service, name string, data io.Reader) error {
-	log.Error("----------- filestore: StoreFile() called")
+	log.Error("+++ filestore: StoreFile() called")
 	b, err := io.ReadAll(data)
 	if err != nil {
 		return err
@@ -51,10 +51,24 @@ func (d *Datastore) tryStoreFile(txn *spanner.ReadWriteTransaction, service, nam
 
 // StatFile implements db.FileStore.
 func (d *Datastore) StatFile(ctx context.Context, service, name string) (time.Time, error) {
-	log.Error("----------- filestore: StatFile() called")
-	var ts int64
+	log.Error("+++ filestore: StatFile() called")
 
-	return time.Unix(0, ts).UTC(), nil
+	row, err := d.dbClient.Single().ReadRow(ctx, d.files, spanner.Key{"Service", "Name"}, []string{"ModifiedTime", "Data"})
+	if err != nil {
+		return time.Time{}, err
+	}
+	var tp tpb.Timestamp
+	err = row.Columns(&tp)
+	if err != nil {
+		return time.Time{}, err
+	}
+	err = (&tp).CheckValid()
+	if err != nil {
+		return time.Time{}, err
+	}
+	ts := (&tp).AsTime()
+
+	return ts.UTC(), nil
 }
 
 // ReadFile implements db.FileStore.
