@@ -355,9 +355,57 @@ func (d *Datastore) RecordResourceUsageData(ctx context.Context, id common.Clien
 
 // FetchResourceUsageRecords implements db.Store.
 func (d *Datastore) FetchResourceUsageRecords(ctx context.Context, id common.ClientID, startTimestamp, endTimestamp *tspb.Timestamp) ([]*spb.ClientResourceUsageRecord, error) {
-	log.Error("----------- clientstore: FetchResourceUsageRecords() called")
-
-	return nil, nil
+	log.Error("+++ clientstore: FetchResourceUsageRecords() called")
+	if err := startTimestamp.CheckValid(); err != nil {
+		return nil, fmt.Errorf("startTimestamp %v is not valid: %v", startTimestamp, err)
+	}
+	if err := endTimestamp.CheckValid(); err != nil {
+		return nil, fmt.Errorf("endTimestamp %v is not valid: %v", endTimestamp, err)
+	}
+	if !endTimestamp.AsTime().After(startTimestamp.AsTime()) {
+		return nil, fmt.Errorf("time range is invalid: endTimestamp is before or equal startTimestamp")
+	}
+	stmt := spanner.Statement{
+		SQL: "SELECT " +
+		"  t.ServerTimestamp, t.Record " +
+		"FROM " +
+		"  ClientResourceUsageRecords AS t " +
+		"WHERE " +
+		"  t.ClientID = @cID AND " +
+		"  t.ServerTimestamp >= @start AND " +
+		"  t.ServerTimestamp < @end",
+		Params: map[string]interface{}{
+			"cID": id.Bytes(),
+			"start": startTimestamp.AsTime(),
+			"end": endTimestamp.AsTime(),
+		},
+	}
+	iter := d.dbClient.Single().Query(ctx, stmt)
+	defer iter.Stop()
+	var records []*spb.ClientResourceUsageRecord
+	for {
+		var serverTimestamp time.Time
+		var record *spb.ClientResourceUsageRecord
+		row, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := row.Columns(&serverTimestamp, &record); err != nil {
+			return nil, err
+		}
+		tsProto := tspb.New(serverTimestamp)
+		err = tsProto.CheckValid()
+		if err != nil {
+			log.ErrorContextf(ctx, "Encountered invalid commit timestamp in Spanner for client-id %s: %v", id.String(), err)
+		} else {
+			record.ServerTimestamp = tsProto
+		}
+		records = append(records, record)
+	}
+	return records, nil
 }
 
 func timestampProto(nanos int64) *tspb.Timestamp {
