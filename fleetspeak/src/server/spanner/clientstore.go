@@ -292,10 +292,14 @@ func (d *Datastore) StreamClientContacts(ctx context.Context, id common.ClientID
 
 // ListClientContacts implements db.Store.
 func (d *Datastore) ListClientContacts(ctx context.Context, id common.ClientID) ([]*spb.ClientContact, error) {
-	log.Error("----------- clientstore: ListClientContacts() called")
+	log.Error("+++ clientstore: ListClientContacts() called")
 	var res []*spb.ClientContact
-
-	return res, nil
+	callback := func(c *spb.ClientContact) error {
+		res = append(res, c)
+		return nil
+	}
+	err := d.StreamClientContacts(ctx, id, callback)
+	return res, err
 }
 
 func splitContact(contact db.ContactID) (common.ClientID, int64, error) {
