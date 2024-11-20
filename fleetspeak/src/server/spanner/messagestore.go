@@ -314,10 +314,67 @@ func (d *Datastore) GetPendingMessageCount(ctx context.Context, ids []common.Cli
 
 // GetPendingMessages implements db.MessageStore.
 func (d *Datastore) GetPendingMessages(ctx context.Context, ids []common.ClientID, offset uint64, count uint64, wantData bool) ([]*fspb.Message, error) {
-	log.Error("----------- messagestore: GetPendingMessages() called")
-	var res []*fspb.Message
-
-	return res, nil
+	log.Error("+++ messagestore: GetPendingMessages() called")
+	clientIds := make([][]byte, 0, len(ids))
+	for _, id := range ids {
+		clientIds = append(clientIds, id.Bytes())
+	}
+	var stmt spanner.Statement
+	if offset == 0 {
+		stmt = spanner.Statement{
+			SQL: "SELECT " +
+			"  cpm.MessageId " +
+			"FROM " +
+			"  ClientPendingMessages cpm " +
+			"WHERE " +
+			"  cpm.ClientId IN UNNEST(@idsBytes) " +
+			"ORDER BY " +
+			    "  cpm.MessageId ",
+			Params: map[string]interface{}{
+				"idsBytes": clientIds,
+			},
+		}
+	} else {
+		if count == 0 {
+			return nil, fmt.Errorf("if offset is provided, a count must be provided as well")
+		} else {
+			stmt = spanner.Statement{
+				SQL: "SELECT " +
+				"  cpm.MessageId " +
+				"FROM " +
+				"  ClientPendingMessages cpm " +
+				"WHERE " +
+				"  cpm.ClientId IN UNNEST(@idsBytes) " +
+				"ORDER BY " +
+			    "  cpm.MessageId " +
+				"LIMIT @limit " +
+				"OFFSET @offset " ,
+				Params: map[string]interface{}{
+					"idsBytes": clientIds,
+					"limit": count,
+					"offset": offset,
+				},
+			}
+		}
+	}
+	var ks spanner.KeySet
+	iter := d.dbClient.Single().Query(ctx, stmt)
+	defer iter.Stop()
+	for {
+		var messageId []byte
+		row, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := row.ColumnByName("MessageId", &messageId); err != nil {
+			return nil, err
+		}
+		ks = spanner.KeySets(spanner.KeySets(spanner.Key{messageId}, ks))
+	}
+	return d.tryGetMessages(ctx, ks, wantData)
 }
 
 // DeletePendingMessages implements db.MessageStore.
