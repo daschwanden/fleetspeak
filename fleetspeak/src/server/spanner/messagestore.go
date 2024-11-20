@@ -641,7 +641,7 @@ func (d *Datastore) tryGetMessages(ctx context.Context, msgKeySet spanner.KeySet
 		if wantData {
 			encryptedData := &spanner.NullProtoMessage{}
 			encryptedData.ProtoMessageVal = &anypb.Any{}
-			if err := row.Columns(&messageId, &source, &sourceMessageId, &destination, &messageType, &creationTime, &encryptedData, &result, &validationInfo, &annotations); err != nil {
+			if err := row.Columns(&messageId, &source, &sourceMessageId, &destination, &messageType, &creationTime, &result, &validationInfo, &annotations, &encryptedData); err != nil {
 				log.Errorf("row.Columns() error: %v", err)
 				return ret, err
 			}
@@ -875,9 +875,17 @@ func (d *Datastore) RegisterMessageProcessor(mp db.MessageProcessor) {
 	log.Error("+++ messagestore: RegisterMessageProcessor() called")
 	ctx := context.Background()
 	err := d.pubsubSub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
-		log.Infof("==== Got message: %q\n", string(msg.Data))
-
-		msg.Ack()
+		log.Infof("====================== Got message: %q\n", string(msg.Data))
+		var msgKeySet = spanner.KeySets()
+		msgKeySet = spanner.KeySets(
+			spanner.KeySets(spanner.Key{msg.Data}), msgKeySet)
+		msgs, err := d.tryGetMessages(ctx, msgKeySet, true)
+		if err == nil {
+			msg.Ack()
+			mp.ProcessMessages(msgs)
+		} else {
+			msg.Nack()
+		}
     })
 	if err != nil {
 		log.Errorf("Failed to receive server message for processing: %v", err)
@@ -885,5 +893,5 @@ func (d *Datastore) RegisterMessageProcessor(mp db.MessageProcessor) {
 }
 
 func (d *Datastore) StopMessageProcessor() {
-	log.Error("----------- messagestore: StopMessageProcessor() called")
+	log.Error("+++ messagestore: StopMessageProcessor() called")
 }
