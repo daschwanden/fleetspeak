@@ -286,8 +286,44 @@ func (d *Datastore) tryRecordClientContact(txn *spanner.ReadWriteTransaction, da
 
 // StreamClientContacts implements db.Store.
 func (d *Datastore) StreamClientContacts(ctx context.Context, id common.ClientID, callback func(*spb.ClientContact) error) error {
-	log.Error("----------- clientstore: StreamClientContacts() called")
-    return nil
+	log.Error("+++ clientstore: StreamClientContacts() called")
+	iter := d.dbClient.Single().Read(ctx, d.clientContacts, spanner.Key{id.Bytes()}.AsPrefix(),
+		[]string{"Time", "SentNonce", "ReceivedNonce", "Address"})
+	defer iter.Stop()
+	for {
+		row, err := iter.Next()
+		if err == iterator.Done {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var ts time.Time
+		var sn uint64
+		var rn uint64
+		var ad spanner.NullString
+		if err := row.Columns(&ts, &sn, &rn, &ad); err != nil {
+			return err
+		}
+		if !ad.Valid {
+			ad.String()
+		}
+		tp := tspb.New(ts)
+		err = tp.CheckValid()
+		if err != nil {
+			return fmt.Errorf("can't make timestamp proto out of read timestamp [%v]: %v", ts, err)
+		}
+		err = callback(&spb.ClientContact{
+			SentNonce:       sn,
+			ReceivedNonce:   rn,
+			ObservedAddress: ad.StringVal,
+			Timestamp:       tp,
+		})
+		if err != nil {
+			return fmt.Errorf("callback failed: %v", err)
+		}
+		return nil
+	}
 }
 
 // ListClientContacts implements db.Store.
