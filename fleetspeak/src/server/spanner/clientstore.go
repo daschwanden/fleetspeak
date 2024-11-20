@@ -348,8 +348,32 @@ func (d *Datastore) tryLinkMessagesToContact(tr *spanner.ReadWriteTransaction, c
 
 // RecordResourceUsageData implements db.Store.
 func (d *Datastore) RecordResourceUsageData(ctx context.Context, id common.ClientID, rud *mpb.ResourceUsageData) error {
-	log.Error("----------- clientstore: RecordResourceUsageData() called")
+	log.Error("+++ clientstore: RecordResourceUsageData() called")
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		return d.tryRecordResourceUsageData(txn, id, rud)
+	})
+	return err
+}
 
+func (d *Datastore) tryRecordResourceUsageData(tr *spanner.ReadWriteTransaction, id common.ClientID, rud *mpb.ResourceUsageData) error {
+	record := spb.ClientResourceUsageRecord{
+		Scope:                 rud.Scope,
+		Pid:                   rud.Pid,
+		ProcessStartTime:      rud.ProcessStartTime,
+		ClientTimestamp:       rud.DataTimestamp,
+		ProcessTerminated:     rud.ProcessTerminated,
+		MeanUserCpuRate:       float32(rud.ResourceUsage.MeanUserCpuRate),
+		MaxUserCpuRate:        float32(rud.ResourceUsage.MaxUserCpuRate),
+		MeanSystemCpuRate:     float32(rud.ResourceUsage.MeanSystemCpuRate),
+		MaxSystemCpuRate:      float32(rud.ResourceUsage.MaxSystemCpuRate),
+		MeanResidentMemoryMib: int32(rud.ResourceUsage.MeanResidentMemory * bytesToMIB),
+		MaxResidentMemoryMib:  int32(float64(rud.ResourceUsage.MaxResidentMemory) * bytesToMIB),
+		MeanNumFds:            int32(rud.ResourceUsage.GetMeanNumFds()),
+		MaxNumFds:             int32(rud.ResourceUsage.GetMaxNumFds()),
+	}
+	resourceUsageCols := []string{"ClientID", "ServerTimestamp", "Record"}
+	ms := []*spanner.Mutation{spanner.InsertOrUpdate(d.clientResourceUsageRecords, resourceUsageCols, []interface{}{id.Bytes(), spanner.CommitTimestamp, &record})}
+	tr.BufferWrite(ms)
 	return nil
 }
 
