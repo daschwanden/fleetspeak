@@ -276,11 +276,6 @@ func genPlaceholders(num int) string {
 	return strings.Join(es, ", ")
 }
 
-func (d *Datastore) getPendingMessageRawIds(ctx context.Context, tx *sql.Tx, ids []common.ClientID, offset uint64, limit uint64, forUpdate bool) ([][]byte, error) {
-
-	return nil, nil
-}
-
 // GetPendingMessageCount implements db.MessageStore.
 func (d *Datastore) GetPendingMessageCount(ctx context.Context, ids []common.ClientID) (uint64, error) {
 	log.Error("+++ messagestore: GetPendingMessageCount() called")
@@ -377,10 +372,65 @@ func (d *Datastore) GetPendingMessages(ctx context.Context, ids []common.ClientI
 	return d.tryGetMessages(ctx, ks, wantData)
 }
 
+func (d *Datastore) getPendingMessages(ctx context.Context, txn *spanner.ReadWriteTransaction, cids []common.ClientID) (map[common.MessageID]common.ClientID, error) {
+	var keySet spanner.KeySet
+	for _, cid := range cids {
+		keySet = spanner.KeySets(spanner.KeySets(spanner.Key{cid.Bytes()}.AsPrefix(), keySet))
+	}
+	found := make(map[common.MessageID]common.ClientID)
+	iter := txn.Read(ctx, d.clientPendingMessages, keySet, []string{"ClientID", "MessageID"})
+	defer iter.Stop()
+	for {
+		row, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		var clientId []byte
+		var messageId []byte
+		if err := row.Columns(&clientId, &messageId); err != nil {
+			return nil, err
+		}
+		cid, err := common.BytesToClientID(clientId)
+		if err != nil {
+			return nil, err
+		}
+		if err != nil {
+			return nil, err
+		}
+		mid, err := common.BytesToMessageID(messageId)
+		if err != nil {
+			return nil, err
+		}
+		found[mid] = cid
+	}
+	return found, nil
+}
+
 // DeletePendingMessages implements db.MessageStore.
-func (d *Datastore) DeletePendingMessages(ctx context.Context, ids []common.ClientID) error {
-	log.Error("----------- messagestore: DeletePendingMessages() called")
-	return nil
+func (d *Datastore) DeletePendingMessages(ctx context.Context, cids []common.ClientID) error {
+	log.Error("+++ messagestore: DeletePendingMessages() called")
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		toDel, err := d.getPendingMessages(ctx, txn, cids)
+		res := &fspb.MessageResult{
+			ProcessedTime: db.NowProto(),
+			Failed:        true,
+			FailedReason:  "Removed by admin action.",
+		}
+		var ms []*spanner.Mutation
+		msgCols := []string{"MessageID", "EncryptedData", "Result"}
+		for mid, cid := range toDel {
+			bcid := cid.Bytes()
+			bmid := mid.Bytes()
+			ms = append(ms, spanner.Update(d.messages, msgCols, []interface{}{bmid, nil, res}))
+			ms = append(ms, spanner.Delete(d.clientPendingMessages, spanner.Key{bcid, bmid}))
+		}
+		err = txn.BufferWrite(ms)
+		return err
+	})
+	return err
 }
 
 // StoreMessages implements db.MessageStore.
