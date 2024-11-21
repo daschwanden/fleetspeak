@@ -64,9 +64,53 @@ func uint64ToBytes(i uint64) []byte {
 
 // StreamClientIds implements db.Store.
 func (d *Datastore) StreamClientIds(ctx context.Context, includeBlacklisted bool, lastContactAfter *time.Time, callback func(common.ClientID) error) error {
-	log.Error("----------- clientstore: StreamClientIds() called")
-	
-	return nil
+	log.Error("+++ clientstore: StreamClientIds() called")
+	query :="SELECT t.ClientID FROM Clients AS t"
+	var params map[string]interface{}
+	switch {
+	case !includeBlacklisted && lastContactAfter == nil:
+		query += " WHERE NOT t.Blacklisted"
+	case !includeBlacklisted && lastContactAfter != nil:
+		query += " WHERE NOT t.Blacklisted AND t.LastContactTime > @time"
+		params = map[string]interface{}{
+			"time":  lastContactAfter,
+		}
+	case includeBlacklisted && lastContactAfter != nil:
+		query += " WHERE t.LastContactTime > @time"
+		params = map[string]interface{}{
+			"time":  lastContactAfter,
+		}
+	}
+	stmt := spanner.Statement{
+		SQL: query,
+		Params: params,
+	}
+	iter := d.dbClient.Single().Query(ctx, stmt)
+	defer iter.Stop()
+	for {
+		row, err := iter.Next()
+		if err == iterator.Done {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		var id []byte
+		err = row.ColumnByName("ClientID", &id)
+		if err != nil {
+			return err
+		}
+
+		cid, err := common.BytesToClientID(id)
+		if err != nil {
+			return err
+		}
+
+		err = callback(cid)
+		if err != nil {
+			return err
+		}
+	}
 }
 
 // ListClients implements db.Store.
@@ -322,7 +366,6 @@ func (d *Datastore) StreamClientContacts(ctx context.Context, id common.ClientID
 		if err != nil {
 			return fmt.Errorf("callback failed: %v", err)
 		}
-		return nil
 	}
 }
 
