@@ -1,0 +1,2 @@
+absl-py>=0.8.0
+fleetspeak>=0.1.7
