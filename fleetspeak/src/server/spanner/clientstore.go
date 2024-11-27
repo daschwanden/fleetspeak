@@ -165,8 +165,11 @@ func (d *Datastore) ListClients(ctx context.Context, ids []common.ClientID) ([]*
 		var t time.Time
 		var addr, streaming spanner.NullString
 		var lc *tspb.Timestamp
+		lcn := &spanner.NullProtoMessage{}
+		lcn.ProtoMessageVal = &tspb.Timestamp{}
+
 		var bl spanner.NullBool
-		if err := row.Columns(&id, &t, &addr, &streaming, &lc, &bl); err != nil {
+		if err := row.Columns(&id, &t, &addr, &streaming, &lcn, &bl); err != nil {
 			return nil, err
 		}
 		var ts *tspb.Timestamp
@@ -183,6 +186,9 @@ func (d *Datastore) ListClients(ctx context.Context, ids []common.ClientID) ([]*
 		}
 		if !streaming.Valid {
 			streaming.StringVal = ""
+		}
+		if lcn.Valid {
+			lc = lcn.ProtoMessageVal.(*tspb.Timestamp)
 		}
 		res = append(res, &spb.Client{
 			ClientId:               id,
@@ -343,10 +349,17 @@ func (d *Datastore) StreamClientContacts(ctx context.Context, id common.ClientID
 			return err
 		}
 		var ts time.Time
-		var sn uint64
-		var rn uint64
+		var sn, rn []byte
 		var ad spanner.NullString
 		if err := row.Columns(&ts, &sn, &rn, &ad); err != nil {
+			return err
+		}
+		sentNonce, err := bytesToUint64(sn)
+		if err != nil {
+			return err
+		}
+		receivedNonce, err := bytesToUint64(rn)
+		if err != nil {
 			return err
 		}
 		if !ad.Valid {
@@ -358,8 +371,8 @@ func (d *Datastore) StreamClientContacts(ctx context.Context, id common.ClientID
 			return fmt.Errorf("can't make timestamp proto out of read timestamp [%v]: %v", ts, err)
 		}
 		err = callback(&spb.ClientContact{
-			SentNonce:       sn,
-			ReceivedNonce:   rn,
+			SentNonce:       sentNonce,
+			ReceivedNonce:   receivedNonce,
 			ObservedAddress: ad.StringVal,
 			Timestamp:       tp,
 		})

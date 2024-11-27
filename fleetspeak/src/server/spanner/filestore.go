@@ -53,7 +53,7 @@ func (d *Datastore) tryStoreFile(txn *spanner.ReadWriteTransaction, service, nam
 func (d *Datastore) StatFile(ctx context.Context, service, name string) (time.Time, error) {
 	log.Error("+++ filestore: StatFile() called")
 
-	row, err := d.dbClient.Single().ReadRow(ctx, d.files, spanner.Key{"Service", "Name"}, []string{"ModifiedTime", "Data"})
+	row, err := d.dbClient.Single().ReadRow(ctx, d.files, spanner.Key{service, name}, []string{"ModifiedTime"})
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -74,7 +74,7 @@ func (d *Datastore) StatFile(ctx context.Context, service, name string) (time.Ti
 // ReadFile implements db.FileStore.
 func (d *Datastore) ReadFile(ctx context.Context, service, name string) (data db.ReadSeekerCloser, modtime time.Time, err error) {
 	log.Error("+++ filestore: ReadFile() called")
-	row, err := d.dbClient.Single().ReadRow(ctx, d.files, spanner.Key{"Service", "Name"}, []string{"ModifiedTime", "Data"})
+	row, err := d.dbClient.Single().ReadRow(ctx, d.files, spanner.Key{service, name}, []string{"ModifiedTime", "Data"})
 	if err != nil {
 		return nil, time.Time{}, err
 	}

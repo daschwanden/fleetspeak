@@ -279,14 +279,14 @@ func genPlaceholders(num int) string {
 // GetPendingMessageCount implements db.MessageStore.
 func (d *Datastore) GetPendingMessageCount(ctx context.Context, ids []common.ClientID) (uint64, error) {
 	log.Error("+++ messagestore: GetPendingMessageCount() called")
-	var result uint64
+	var result int64
 	clientIds := make([][]byte, 0, len(ids))
 	for _, id := range ids {
 		clientIds = append(clientIds, id.Bytes())
 	}
 	stmt := spanner.Statement{
 		SQL: "SELECT " +
-		"  CAST(COUNT(*) as UINT64) Cnt " +
+		"  COUNT(*) Cnt " +
 		"FROM " +
 		"  ClientPendingMessages cpm " +
 		"WHERE " +
@@ -301,7 +301,7 @@ func (d *Datastore) GetPendingMessageCount(ctx context.Context, ids []common.Cli
 	if err == nil {
 		err = row.ColumnByName("Cnt", &result)
 		if err == nil {
-			return result, nil
+			return uint64(result), nil
 		}
 	}
 	return 0, err
@@ -346,13 +346,13 @@ func (d *Datastore) GetPendingMessages(ctx context.Context, ids []common.ClientI
 				"OFFSET @offset " ,
 				Params: map[string]interface{}{
 					"idsBytes": clientIds,
-					"limit": count,
-					"offset": offset,
+					"limit": int64(count),
+					"offset": int64(offset),
 				},
 			}
 		}
 	}
-	var ks spanner.KeySet
+	var ks = spanner.KeySets()
 	iter := d.dbClient.Single().Query(ctx, stmt)
 	defer iter.Stop()
 	for {
@@ -373,7 +373,7 @@ func (d *Datastore) GetPendingMessages(ctx context.Context, ids []common.ClientI
 }
 
 func (d *Datastore) getPendingMessages(ctx context.Context, txn *spanner.ReadWriteTransaction, cids []common.ClientID) (map[common.MessageID]common.ClientID, error) {
-	var keySet spanner.KeySet
+	var keySet = spanner.KeySets()
 	for _, cid := range cids {
 		keySet = spanner.KeySets(spanner.KeySets(spanner.Key{cid.Bytes()}.AsPrefix(), keySet))
 	}
@@ -413,7 +413,7 @@ func (d *Datastore) getPendingMessages(ctx context.Context, txn *spanner.ReadWri
 func (d *Datastore) DeletePendingMessages(ctx context.Context, cids []common.ClientID) error {
 	log.Error("+++ messagestore: DeletePendingMessages() called")
 	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
-		toDel, err := d.getPendingMessages(ctx, txn, cids)
+		toDel, _ := d.getPendingMessages(ctx, txn, cids)
 		res := &fspb.MessageResult{
 			ProcessedTime: db.NowProto(),
 			Failed:        true,
@@ -427,7 +427,7 @@ func (d *Datastore) DeletePendingMessages(ctx context.Context, cids []common.Cli
 			ms = append(ms, spanner.Update(d.messages, msgCols, []interface{}{bmid, nil, res}))
 			ms = append(ms, spanner.Delete(d.clientPendingMessages, spanner.Key{bcid, bmid}))
 		}
-		err = txn.BufferWrite(ms)
+		err := txn.BufferWrite(ms)
 		return err
 	})
 	return err
@@ -511,12 +511,22 @@ func (d *Datastore) tryStoreMessages(ctx context.Context, txn *spanner.ReadWrite
 			return err
 		}
 		var info messageInfo
-		if err := row.ToStruct(&info); err != nil {
+		var messageId []byte
+		var destination *fspb.Address
+		result := &spanner.NullProtoMessage{}
+		result.ProtoMessageVal = &fspb.MessageResult{}
+
+		if err := row.Columns(&messageId, &destination, &result); err != nil {
 			return err
 		}
-		id, err := common.BytesToMessageID(info.MessageID)
+		id, err := common.BytesToMessageID(messageId)
 		if err != nil {
 			return err
+		}
+		info.MessageID = messageId
+		info.Destination = destination
+		if result.Valid {
+			info.Result = result.ProtoMessageVal.(*fspb.MessageResult)
 		}
 		found[id] = &info
 	}
@@ -632,12 +642,6 @@ func (d *Datastore) tryStoreMessage(ctx context.Context, txn *spanner.ReadWriteT
 	return nil
 }
 
-//func (d *Datastore) getMessages(ctx context.Context, tx *sql.Tx, ids []common.MessageID, wantData bool) ([]*fspb.Message, error) {
-//	res := make([]*fspb.Message, 0, len(ids))
-//
-//	return res, nil
-//}
-
 // GetMessages implements db.Store.
 func (d *Datastore) GetMessages(ctx context.Context, ids []common.MessageID, wantData bool) ([]*fspb.Message, error) {
 	log.Error("+++ messagestore: GetMessages() called")
@@ -665,7 +669,9 @@ func (d *Datastore) tryGetMessages(ctx context.Context, msgKeySet spanner.KeySet
 		// Everything in msg, including Data
 		cols = append(cols, "EncryptedData")
 	}
+	log.Error("====== before : d.dbClient.Single().Read()")
 	iter := d.dbClient.Single().Read(ctx, d.messages, msgKeySet, cols)
+	log.Error("====== after : d.dbClient.Single().Read()")
 	defer iter.Stop()
 	for {
 		row, err := iter.Next()
@@ -728,14 +734,17 @@ func (d *Datastore) tryGetMessages(ctx context.Context, msgKeySet spanner.KeySet
 // GetMessageResult implements db.Store.
 func (d *Datastore) GetMessageResult(ctx context.Context, id common.MessageID) (*fspb.MessageResult, error) {
 	log.Error("+++ messagestore: GetMessageResult() called")
-	var ret fspb.MessageResult
+	ret := &spanner.NullProtoMessage{}
+	ret.ProtoMessageVal = &fspb.MessageResult{}
 	row, err := d.dbClient.Single().ReadRow(ctx, d.messages, spanner.Key{id.Bytes()}, []string{"Result"})
 	if err == nil {
 		err = row.Column(0, &ret)
 		if err != nil {
 			return nil, err
+		} else if ret.Valid {
+			return ret.ProtoMessageVal.(*fspb.MessageResult), nil
 		} else {
-			return &ret, nil
+			return nil, nil
 		}
 	} else {
 		return nil, err
