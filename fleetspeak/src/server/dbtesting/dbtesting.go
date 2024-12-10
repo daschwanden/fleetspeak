@@ -45,7 +45,7 @@ func DataStoreTestSuite(t *testing.T, env DbTestEnv) {
 	clientStoreTestSuite(t, env)
 	//broadcastStoreTestSuite(t, env)
 	fileStoreTestSuite(t, env)
-	//integrationTestSuite(t, env)
+	integrationTestSuite(t, env)
 
 	if err := env.Destroy(); err != nil {
 		t.Fatalf("Can't destroy the datastore: %v", err)

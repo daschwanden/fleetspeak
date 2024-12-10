@@ -745,7 +745,7 @@ func messageStoreTestSuite(t *testing.T, env DbTestEnv) {
 			"PendingMessagesTest":                  pendingMessagesTest,
 			"ClientMessagesForProcessingTest":      clientMessagesForProcessingTest,
 			"ClientMessagesForProcessingLimitTest": clientMessagesForProcessingLimitTest,
-			//"RegisterMessageProcessor":             registerMessageProcessorTest,
+			"RegisterMessageProcessor":             registerMessageProcessorTest,
 		})
 	})
 }

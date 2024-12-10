@@ -926,8 +926,9 @@ func (d *Datastore) tryClientMessagesForProcessing(ctx context.Context, id commo
 func (d *Datastore) RegisterMessageProcessor(mp db.MessageProcessor) {
 	log.Error("+++ messagestore: RegisterMessageProcessor() called")
 	ctx := context.Background()
-	err := d.pubsubSub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
-		log.Infof("====================== Got message: %q\n", string(msg.Data))
+	go func() {
+	  err := d.pubsubSub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
+	  	log.Infof("====================== Got message: %q\n", string(msg.Data))
 		var msgKeySet = spanner.KeySets()
 		msgKeySet = spanner.KeySets(
 			spanner.KeySets(spanner.Key{msg.Data}), msgKeySet)
@@ -938,10 +939,11 @@ func (d *Datastore) RegisterMessageProcessor(mp db.MessageProcessor) {
 		} else {
 			msg.Nack()
 		}
-	})
-	if err != nil {
+	  })
+	  if err != nil && err != context.Canceled {
 		log.Errorf("Failed to receive server message for processing: %v", err)
-	}
+	  }
+	}()
 }
 
 func (d *Datastore) StopMessageProcessor() {

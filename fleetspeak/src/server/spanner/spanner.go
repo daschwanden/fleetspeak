@@ -41,7 +41,6 @@ type Datastore struct {
 	broadcastAllocations       string
 	broadcastSent              string
 	files                      string
-	//looper *messageLooper
 	pubsubClient               *pubsub.Client
 	pubsubSub                  *pubsub.Subscription
 	pubsubTopic                *pubsub.Topic
