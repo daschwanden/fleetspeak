@@ -427,6 +427,7 @@ func (d *Datastore) LinkMessagesToContact(ctx context.Context, contact db.Contac
 }
 
 func (d *Datastore) tryLinkMessagesToContact(tr *spanner.ReadWriteTransaction, cid common.ClientID, ts int64, ids []common.MessageID) error {
+	log.Error("+++ clientstore: tryLinkMessagesToContact() called")
 	bcid := cid.Bytes()
 	sts := time.UnixMicro(ts)
 	var ms []*spanner.Mutation

@@ -3,6 +3,7 @@ FROM golang:1.22 AS builder
 RUN apt-get update && \
     apt install -y python3-venv && \
     apt install -y pip && \
+    apt install -y vim && \
     apt-get install -y \
     python-is-python3
 

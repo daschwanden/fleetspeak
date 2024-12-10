@@ -17,7 +17,6 @@ package spanner
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -286,11 +285,11 @@ func (d *Datastore) GetPendingMessageCount(ctx context.Context, ids []common.Cli
 	}
 	stmt := spanner.Statement{
 		SQL: "SELECT " +
-		"  COUNT(*) Cnt " +
-		"FROM " +
-		"  ClientPendingMessages cpm " +
-		"WHERE " +
-		"  cpm.ClientId IN UNNEST(@idsBytes) ",
+			"  COUNT(*) Cnt " +
+			"FROM " +
+			"  ClientPendingMessages cpm " +
+			"WHERE " +
+			"  cpm.ClientId IN UNNEST(@idsBytes) ",
 		Params: map[string]interface{}{
 			"idsBytes": clientIds,
 		},
@@ -314,43 +313,41 @@ func (d *Datastore) GetPendingMessages(ctx context.Context, ids []common.ClientI
 	for _, id := range ids {
 		clientIds = append(clientIds, id.Bytes())
 	}
-	var stmt spanner.Statement
+	sql := "SELECT " +
+		"  cpm.MessageId " +
+		"FROM " +
+		"  ClientPendingMessages cpm " +
+		"WHERE " +
+		"  cpm.ClientId IN UNNEST(@idsBytes) " +
+		"ORDER BY " +
+		"  cpm.MessageId "
+	params := map[string]interface{}{
+		"idsBytes": clientIds,
+	}
 	if offset == 0 {
-		stmt = spanner.Statement{
-			SQL: "SELECT " +
-			"  cpm.MessageId " +
-			"FROM " +
-			"  ClientPendingMessages cpm " +
-			"WHERE " +
-			"  cpm.ClientId IN UNNEST(@idsBytes) " +
-			"ORDER BY " +
-			    "  cpm.MessageId ",
-			Params: map[string]interface{}{
+		if count != 0 {
+			params = map[string]interface{}{
 				"idsBytes": clientIds,
-			},
+				"limit":    int64(count),
+			}
+			sql += "LIMIT @limit "
 		}
 	} else {
-		if count == 0 {
-			return nil, fmt.Errorf("if offset is provided, a count must be provided as well")
-		} else {
-			stmt = spanner.Statement{
-				SQL: "SELECT " +
-				"  cpm.MessageId " +
-				"FROM " +
-				"  ClientPendingMessages cpm " +
-				"WHERE " +
-				"  cpm.ClientId IN UNNEST(@idsBytes) " +
-				"ORDER BY " +
-			    "  cpm.MessageId " +
-				"LIMIT @limit " +
-				"OFFSET @offset " ,
-				Params: map[string]interface{}{
-					"idsBytes": clientIds,
-					"limit": int64(count),
-					"offset": int64(offset),
-				},
+		if count != 0 {
+			params = map[string]interface{}{
+				"idsBytes": clientIds,
+				"limit":    int64(count),
+				"offset":   int64(offset),
 			}
+			sql += "LIMIT @limit " +
+				"OFFSET @offset "
+		} else {
+			return nil, fmt.Errorf("if offset is provided, a count must be provided as well")
 		}
+	}
+	stmt := spanner.Statement{
+		SQL:    sql,
+		Params: params,
 	}
 	var ks = spanner.KeySets()
 	iter := d.dbClient.Single().Query(ctx, stmt)
@@ -435,7 +432,7 @@ func (d *Datastore) DeletePendingMessages(ctx context.Context, cids []common.Cli
 
 // StoreMessages implements db.MessageStore.
 func (d *Datastore) StoreMessages(ctx context.Context, msgs []*fspb.Message, contact db.ContactID) error {
-	log.Error("+++ messagestore: StoreMessages() called")
+	log.Errorf("+++ messagestore: StoreMessages() for %d messages called", len(msgs))
 	blindStore := true
 	for _, m := range msgs {
 		// If it doesn't have a result, or it has a failed result, or is
@@ -466,10 +463,10 @@ func (d *Datastore) blindStoreProcessedMessages(ctx context.Context, msgs []*fsp
 		}
 		ct := m.CreationTime.AsTime()
 		cols := []string{"MessageID", "Source", "SourceMessageID", "Destination", "MessageType",
-		                 "CreationTime", "ValidationInformation", "Result", "EncryptedData",
-						 "Annotations"}
+			"CreationTime", "ValidationInformation", "Result", "EncryptedData",
+			"Annotations"}
 		vals := []interface{}{m.MessageId, m.Source, m.SourceMessageId, m.Destination, m.MessageType,
-			                  ct, m.ValidationInfo, m.Result, nil, m.Annotations}
+			ct, m.ValidationInfo, m.Result, nil, m.Annotations}
 		ms = append(ms, spanner.Replace(d.messages, cols, vals))
 	}
 	_, lastErr := d.dbClient.Apply(ctx, ms)
@@ -604,9 +601,9 @@ func (d *Datastore) tryStoreMessage(ctx context.Context, txn *spanner.ReadWriteT
 	ct := m.CreationTime.AsTime()
 	var ms []*spanner.Mutation
 	msgCols := []string{"MessageID", "Source", "SourceMessageID", "Destination", "MessageType", "CreationTime",
-		                "ValidationInformation", "Result", "EncryptedData", "Annotations"}
+		"ValidationInformation", "Result", "EncryptedData", "Annotations"}
 	values := []interface{}{m.MessageId, m.Source, m.SourceMessageId, m.Destination, m.MessageType, ct,
-							m.ValidationInfo, m.Result, encryptedData, m.Annotations}
+		m.ValidationInfo, m.Result, encryptedData, m.Annotations}
 	if m.Result != nil && !m.Result.Failed && len(m.Destination.ClientId) == 0 {
 		// Replace has the side effect of deleting anything in
 		// ServerMessageNotifications for this message.
@@ -629,9 +626,12 @@ func (d *Datastore) tryStoreMessage(ctx context.Context, txn *spanner.ReadWriteT
 				[]interface{}{m.Destination.ClientId, m.MessageId, int64(0), retryTime, ct, m.Destination.ServiceName}))
 		}
 	}
-	txn.BufferWrite(ms)
+	err = txn.BufferWrite(ms)
+	if err != nil {
+		return err
+	}
 	if sendServerMsgEvent {
-		log.Error("====== messagestore: sendServerMsgEvent called")
+		//log.Error("====== messagestore: sendServerMsgEvent called")
 		result := d.pubsubTopic.Publish(ctx, &pubsub.Message{
 			Data: m.MessageId,
 		})
@@ -669,9 +669,7 @@ func (d *Datastore) tryGetMessages(ctx context.Context, msgKeySet spanner.KeySet
 		// Everything in msg, including Data
 		cols = append(cols, "EncryptedData")
 	}
-	log.Error("====== before : d.dbClient.Single().Read()")
 	iter := d.dbClient.Single().Read(ctx, d.messages, msgKeySet, cols)
-	log.Error("====== after : d.dbClient.Single().Read()")
 	defer iter.Stop()
 	for {
 		row, err := iter.Next()
@@ -751,8 +749,6 @@ func (d *Datastore) GetMessageResult(ctx context.Context, id common.MessageID) (
 	}
 }
 
-var errLimit = errors.New("limit reached")
-
 // ClientMessagesForProcessing implements db.MessageStore.
 func (d *Datastore) ClientMessagesForProcessing(ctx context.Context, clientID common.ClientID, lim uint64, serviceLimits map[string]uint64) ([]*fspb.Message, error) {
 	log.Error("+++ messagestore: ClientMessagesForProcessing() called")
@@ -764,13 +760,10 @@ func (d *Datastore) ClientMessagesForProcessing(ctx context.Context, clientID co
 	if serviceLimits != nil {
 		readCount = make(map[string]uint64)
 	}
-	// Read all the currently pending messages outside of a transaction,
-	// this might be a bit slow if a lot have built up, but shouldn't block
-	// ongoing writes.
-    iter := d.dbClient.Single().Read(ctx, d.clientPendingMessages,
-		                             spanner.Key{clientID.Bytes()}.AsPrefix(),
-		                             []string{"ClientID", "MessageID", "RetryCount",
-									          "ScheduledTime","DestinationServiceName"})
+	iter := d.dbClient.Single().Read(ctx, d.clientPendingMessages,
+		spanner.Key{clientID.Bytes()}.AsPrefix(),
+		[]string{"ClientID", "MessageID", "RetryCount",
+			"ScheduledTime", "DestinationServiceName"})
 	defer iter.Stop()
 	for {
 		row, err := iter.Next()
@@ -781,7 +774,7 @@ func (d *Datastore) ClientMessagesForProcessing(ctx context.Context, clientID co
 			return nil, err
 		}
 		if count >= lim {
-			return nil, errLimit
+			break
 		}
 		if err := row.ToStruct(&pm); err != nil {
 			return nil, err
@@ -789,15 +782,16 @@ func (d *Datastore) ClientMessagesForProcessing(ctx context.Context, clientID co
 		if serviceLimits != nil {
 			if !pm.DestinationServiceName.Valid {
 				log.WarningContextf(ctx, "DestinationServiceName not set for message %x, ignoring.", pm.MessageID)
-				return nil, nil
+				continue
 			}
 			n := pm.DestinationServiceName.StringVal
-			if readCount[n] >= serviceLimits[n] {
-				return nil, nil
+			val, ok := serviceLimits[n]
+			if !ok || readCount[n] >= val {
+				continue
 			}
 		}
 		if pm.ScheduledTime.After(now) {
-			return nil, nil
+			continue
 		}
 		pendKeySet = spanner.KeySets(
 			spanner.KeySets(spanner.Key{clientID.Bytes(), pm.MessageID}), pendKeySet)
@@ -816,35 +810,35 @@ func (d *Datastore) ClientMessagesForProcessing(ctx context.Context, clientID co
 	}
 
 	msgs, mus, err := d.tryClientMessagesForProcessing(ctx, clientID, now, &pendKeySet)
-	if err != nil {
+	if err == nil {
 		_, err = d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 			e := txn.BufferWrite(mus)
 			return e
 		})
-    }
+	}
 
 	log.V(2).InfoContextf(ctx, "ClientMessagesForProcessing(%v): returning %d messages.", clientID, len(msgs))
 	return msgs, err
 }
 
 func (d *Datastore) tryClientMessagesForProcessing(ctx context.Context, id common.ClientID, now time.Time, pendKeySet *spanner.KeySet) ([]*fspb.Message, []*spanner.Mutation, error) {
-    log.Error("+++ messagestore: tryClientMessagesForProcessing() called")
+	log.Error("+++ messagestore: tryClientMessagesForProcessing() called")
 	var pm pendingMessage
 	var msgKeySet = spanner.KeySets()
 	var count int
 	var mus []*spanner.Mutation
 
-    iter := d.dbClient.Single().Read(ctx, d.clientPendingMessages, *pendKeySet,
-		                             []string{"ClientID", "MessageID", "RetryCount",
-				                              "ScheduledTime","DestinationServiceName"})
+	iter := d.dbClient.Single().Read(ctx, d.clientPendingMessages, *pendKeySet,
+		[]string{"ClientID", "MessageID", "RetryCount",
+			"ScheduledTime", "DestinationServiceName"})
 	defer iter.Stop()
 	for {
 		row, err := iter.Next()
 		if err == iterator.Done {
-		  break
+			break
 		}
 		if err != nil {
-		  return nil, mus, err
+			return nil, mus, err
 		}
 		if err := row.ToStruct(&pm); err != nil {
 			return nil, mus, err
@@ -855,7 +849,7 @@ func (d *Datastore) tryClientMessagesForProcessing(ctx context.Context, id commo
 			log.WarningContextf(ctx, "Message %x for client %v changed during ClientMessageForProcessing - multiple connections?", pm.MessageID, id)
 			return nil, mus, nil
 		}
-		pm.RetryCount = pm.RetryCount+1
+		pm.RetryCount = pm.RetryCount + 1
 		pm.ScheduledTime = db.ClientRetryTime()
 
 		mu, err := spanner.UpdateStruct(d.clientPendingMessages, pm)
@@ -872,13 +866,12 @@ func (d *Datastore) tryClientMessagesForProcessing(ctx context.Context, id commo
 
 	iter = d.dbClient.Single().Read(ctx, d.messages, msgKeySet,
 		[]string{"MessageID", "Source", "SourceMessageID", "Destination", "MessageType", "CreationTime",
-				 "EncryptedData", "Result", "ValidationInformation","Annotations"})
-    defer iter.Stop()
+			"EncryptedData", "Result", "ValidationInformation", "Annotations"})
+	defer iter.Stop()
 	for {
-		log.Error("====== messagestore: message iter loop")
 		row, err := iter.Next()
 		if err == iterator.Done {
-		  break
+			break
 		}
 		if err != nil {
 			log.Errorf("iter.Next() error: %v", err)
@@ -911,7 +904,7 @@ func (d *Datastore) tryClientMessagesForProcessing(ctx context.Context, id commo
 		m.CreationTime = creationTime
 		if encryptedData.Valid {
 			m.EncryptedData = encryptedData.ProtoMessageVal.(*anypb.Any)
-	    }
+		}
 		if result.Valid {
 			m.Result = result.ProtoMessageVal.(*fspb.MessageResult)
 		}
@@ -945,7 +938,7 @@ func (d *Datastore) RegisterMessageProcessor(mp db.MessageProcessor) {
 		} else {
 			msg.Nack()
 		}
-    })
+	})
 	if err != nil {
 		log.Errorf("Failed to receive server message for processing: %v", err)
 	}
