@@ -27,7 +27,7 @@ import (
 	"github.com/google/fleetspeak/fleetspeak/src/server/db"
 	"github.com/google/fleetspeak/fleetspeak/src/server/ids"
 
-    "google.golang.org/api/iterator"
+	"google.golang.org/api/iterator"
 
 	log "github.com/golang/glog"
 
@@ -126,7 +126,7 @@ func (d *Datastore) CreateBroadcast(ctx context.Context, b *spb.Broadcast, limit
 // SetBroadcastLimit implements db.BroadcastStore.
 func (d *Datastore) SetBroadcastLimit(ctx context.Context, id ids.BroadcastID, limit uint64) error {
 	log.Error("----------- broadcaststore: SetBroadcastLimit() called")
-    return nil
+	return nil
 }
 
 // SaveBroadcastMessage implements db.BroadcastStore.
@@ -148,16 +148,18 @@ func (d *Datastore) ListActiveBroadcasts(ctx context.Context) ([]*db.BroadcastIn
 			"WHERE b.Sent < b.MessageLimit " +
 			"AND (b.Broadcast.expiration_time IS NULL OR (b.Broadcast.expiration_time.seconds > @nowSec OR (b.Broadcast.expiration_time.seconds = @nowSec AND b.Broadcast.expiration_time.nanos > @nowNano)))",
 		Params: map[string]interface{}{
-			    "nowSec": int64(now.Seconds),
-			    "nowNano": int64(now.Nanos),
+			"nowSec":  int64(now.Seconds),
+			"nowNano": int64(now.Nanos),
 		},
 	}
 
 	var ret []*db.BroadcastInfo
-	iter := d.dbClient.Single().Query(ctx, stmt)
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	iter := txn.Query(ctx, stmt)
 	defer iter.Stop()
 
-    for {
+	for {
 		row, err := iter.Next()
 		if err == iterator.Done {
 			return ret, nil
@@ -165,7 +167,7 @@ func (d *Datastore) ListActiveBroadcasts(ctx context.Context) ([]*db.BroadcastIn
 		if err != nil {
 			return ret, err
 		}
-	    var broadcast *spb.Broadcast
+		var broadcast *spb.Broadcast
 		var sent, messageLimit uint64
 		if err := row.Columns(&broadcast, &sent, &messageLimit); err != nil {
 			return ret, err
@@ -183,6 +185,7 @@ func (d *Datastore) ListSentBroadcasts(ctx context.Context, id common.ClientID) 
 	log.Error("+++ broadcaststore: ListSentBroadcasts() called")
 	var res []ids.BroadcastID
 	ro := d.dbClient.ReadOnlyTransaction()
+	defer ro.Close()
 	krp := spanner.Key{id.Bytes()}.AsPrefix()
 	iter := ro.Read(ctx, d.broadcastSent, krp, []string{"BroadcastID"})
 	defer iter.Stop()

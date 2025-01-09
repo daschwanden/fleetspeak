@@ -294,7 +294,9 @@ func (d *Datastore) GetPendingMessageCount(ctx context.Context, ids []common.Cli
 			"idsBytes": clientIds,
 		},
 	}
-	iter := d.dbClient.Single().Query(ctx, stmt)
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	iter := txn.Query(ctx, stmt)
 	defer iter.Stop()
 	row, err := iter.Next()
 	if err == nil {
@@ -350,7 +352,9 @@ func (d *Datastore) GetPendingMessages(ctx context.Context, ids []common.ClientI
 		Params: params,
 	}
 	var ks = spanner.KeySets()
-	iter := d.dbClient.Single().Query(ctx, stmt)
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	iter := txn.Query(ctx, stmt)
 	defer iter.Stop()
 	for {
 		var messageId []byte
@@ -669,7 +673,9 @@ func (d *Datastore) tryGetMessages(ctx context.Context, msgKeySet spanner.KeySet
 		// Everything in msg, including Data
 		cols = append(cols, "EncryptedData")
 	}
-	iter := d.dbClient.Single().Read(ctx, d.messages, msgKeySet, cols)
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	iter := txn.Read(ctx, d.messages, msgKeySet, cols)
 	defer iter.Stop()
 	for {
 		row, err := iter.Next()
@@ -734,7 +740,9 @@ func (d *Datastore) GetMessageResult(ctx context.Context, id common.MessageID) (
 	log.Error("+++ messagestore: GetMessageResult() called")
 	ret := &spanner.NullProtoMessage{}
 	ret.ProtoMessageVal = &fspb.MessageResult{}
-	row, err := d.dbClient.Single().ReadRow(ctx, d.messages, spanner.Key{id.Bytes()}, []string{"Result"})
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	row, err := txn.ReadRow(ctx, d.messages, spanner.Key{id.Bytes()}, []string{"Result"})
 	if err == nil {
 		err = row.Column(0, &ret)
 		if err != nil {
@@ -760,7 +768,9 @@ func (d *Datastore) ClientMessagesForProcessing(ctx context.Context, clientID co
 	if serviceLimits != nil {
 		readCount = make(map[string]uint64)
 	}
-	iter := d.dbClient.Single().Read(ctx, d.clientPendingMessages,
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	iter := txn.Read(ctx, d.clientPendingMessages,
 		spanner.Key{clientID.Bytes()}.AsPrefix(),
 		[]string{"ClientID", "MessageID", "RetryCount",
 			"ScheduledTime", "DestinationServiceName"})
@@ -828,7 +838,9 @@ func (d *Datastore) tryClientMessagesForProcessing(ctx context.Context, id commo
 	var count int
 	var mus []*spanner.Mutation
 
-	iter := d.dbClient.Single().Read(ctx, d.clientPendingMessages, *pendKeySet,
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	iter := txn.Read(ctx, d.clientPendingMessages, *pendKeySet,
 		[]string{"ClientID", "MessageID", "RetryCount",
 			"ScheduledTime", "DestinationServiceName"})
 	defer iter.Stop()
@@ -864,7 +876,9 @@ func (d *Datastore) tryClientMessagesForProcessing(ctx context.Context, id commo
 
 	rl := make([]*fspb.Message, 0, count)
 
-	iter = d.dbClient.Single().Read(ctx, d.messages, msgKeySet,
+	txn2 := d.dbClient.Single()
+	defer txn2.Close()
+	iter = txn2.Read(ctx, d.messages, msgKeySet,
 		[]string{"MessageID", "Source", "SourceMessageID", "Destination", "MessageType", "CreationTime",
 			"EncryptedData", "Result", "ValidationInformation", "Annotations"})
 	defer iter.Stop()
@@ -927,22 +941,22 @@ func (d *Datastore) RegisterMessageProcessor(mp db.MessageProcessor) {
 	log.Error("+++ messagestore: RegisterMessageProcessor() called")
 	ctx := context.Background()
 	go func() {
-	  err := d.pubsubSub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
-	  	log.Infof("====================== Got message: %q\n", string(msg.Data))
-		var msgKeySet = spanner.KeySets()
-		msgKeySet = spanner.KeySets(
-			spanner.KeySets(spanner.Key{msg.Data}), msgKeySet)
-		msgs, err := d.tryGetMessages(ctx, msgKeySet, true)
-		if err == nil {
-			msg.Ack()
-			mp.ProcessMessages(msgs)
-		} else {
-			msg.Nack()
+		err := d.pubsubSub.Receive(ctx, func(_ context.Context, msg *pubsub.Message) {
+			log.Infof("====================== Got message: %q\n", string(msg.Data))
+			var msgKeySet = spanner.KeySets()
+			msgKeySet = spanner.KeySets(
+				spanner.KeySets(spanner.Key{msg.Data}), msgKeySet)
+			msgs, err := d.tryGetMessages(ctx, msgKeySet, true)
+			if err == nil {
+				msg.Ack()
+				mp.ProcessMessages(msgs)
+			} else {
+				msg.Nack()
+			}
+		})
+		if err != nil && err != context.Canceled {
+			log.Errorf("Failed to receive server message for processing: %v", err)
 		}
-	  })
-	  if err != nil && err != context.Canceled {
-		log.Errorf("Failed to receive server message for processing: %v", err)
-	  }
 	}()
 }
 

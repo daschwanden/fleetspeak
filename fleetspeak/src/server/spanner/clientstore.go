@@ -65,7 +65,7 @@ func uint64ToBytes(i uint64) []byte {
 // StreamClientIds implements db.Store.
 func (d *Datastore) StreamClientIds(ctx context.Context, includeBlacklisted bool, lastContactAfter *time.Time, callback func(common.ClientID) error) error {
 	log.Error("+++ clientstore: StreamClientIds() called")
-	query :="SELECT t.ClientID FROM Clients AS t"
+	query := "SELECT t.ClientID FROM Clients AS t"
 	var params map[string]interface{}
 	switch {
 	case !includeBlacklisted && lastContactAfter == nil:
@@ -73,19 +73,21 @@ func (d *Datastore) StreamClientIds(ctx context.Context, includeBlacklisted bool
 	case !includeBlacklisted && lastContactAfter != nil:
 		query += " WHERE NOT t.Blacklisted AND t.LastContactTime > @time"
 		params = map[string]interface{}{
-			"time":  lastContactAfter,
+			"time": lastContactAfter,
 		}
 	case includeBlacklisted && lastContactAfter != nil:
 		query += " WHERE t.LastContactTime > @time"
 		params = map[string]interface{}{
-			"time":  lastContactAfter,
+			"time": lastContactAfter,
 		}
 	}
 	stmt := spanner.Statement{
-		SQL: query,
+		SQL:    query,
 		Params: params,
 	}
-	iter := d.dbClient.Single().Query(ctx, stmt)
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	iter := txn.Query(ctx, stmt)
 	defer iter.Stop()
 	for {
 		row, err := iter.Next()
@@ -208,14 +210,14 @@ func (d *Datastore) GetClientData(ctx context.Context, id common.ClientID) (*db.
 	log.Error("+++ clientstore: GetClientData() called")
 	var cd *db.ClientData
 
-    txn := d.dbClient.ReadOnlyTransaction()
-    defer txn.Close()
+	txn := d.dbClient.ReadOnlyTransaction()
+	defer txn.Close()
 
 	row, err := txn.ReadRow(ctx, d.clients, spanner.Key{id.Bytes()}, []string{"ClientKey", "Blacklisted"})
 	if err == nil {
 		var bl spanner.NullBool
 		da := db.ClientData{}
-		err = row.Columns(&da.Key,&bl)
+		err = row.Columns(&da.Key, &bl)
 		if err == nil {
 			da.Blacklisted = bl.Valid && bl.Bool
 			krp := spanner.Key{id.Bytes()}.AsPrefix()
@@ -237,7 +239,7 @@ func (d *Datastore) GetClientData(ctx context.Context, id common.ClientID) (*db.
 			}
 			cd = &da
 		}
-    }
+	}
 	return cd, err
 }
 
@@ -247,7 +249,7 @@ func (d *Datastore) AddClient(ctx context.Context, id common.ClientID, data *db.
 	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		return d.tryAddClient(txn, id, data)
 	})
-    return err
+	return err
 }
 
 func (d *Datastore) tryAddClient(txn *spanner.ReadWriteTransaction, id common.ClientID, data *db.ClientData) error {
@@ -283,7 +285,7 @@ func (d *Datastore) RemoveClientLabel(ctx context.Context, id common.ClientID, l
 	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		return d.tryRemoveClientLabel(txn, id, label)
 	})
-    return err
+	return err
 }
 
 func (d *Datastore) tryRemoveClientLabel(tr *spanner.ReadWriteTransaction, id common.ClientID, label *fspb.Label) error {
@@ -484,17 +486,17 @@ func (d *Datastore) FetchResourceUsageRecords(ctx context.Context, id common.Cli
 	}
 	stmt := spanner.Statement{
 		SQL: "SELECT " +
-		"  t.ServerTimestamp, t.Record " +
-		"FROM " +
-		"  ClientResourceUsageRecords AS t " +
-		"WHERE " +
-		"  t.ClientID = @cID AND " +
-		"  t.ServerTimestamp >= @start AND " +
-		"  t.ServerTimestamp < @end",
+			"  t.ServerTimestamp, t.Record " +
+			"FROM " +
+			"  ClientResourceUsageRecords AS t " +
+			"WHERE " +
+			"  t.ClientID = @cID AND " +
+			"  t.ServerTimestamp >= @start AND " +
+			"  t.ServerTimestamp < @end",
 		Params: map[string]interface{}{
-			"cID": id.Bytes(),
+			"cID":   id.Bytes(),
 			"start": startTimestamp.AsTime(),
-			"end": endTimestamp.AsTime(),
+			"end":   endTimestamp.AsTime(),
 		},
 	}
 	iter := d.dbClient.Single().Query(ctx, stmt)

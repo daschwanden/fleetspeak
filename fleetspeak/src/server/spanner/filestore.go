@@ -37,7 +37,7 @@ func (d *Datastore) StoreFile(ctx context.Context, service, name string, data io
 		return err
 	}
 
-    _, err = d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+	_, err = d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		d.tryStoreFile(txn, service, name, b)
 		return nil
 	})
@@ -45,15 +45,17 @@ func (d *Datastore) StoreFile(ctx context.Context, service, name string, data io
 }
 
 func (d *Datastore) tryStoreFile(txn *spanner.ReadWriteTransaction, service, name string, data []byte) {
-    m := spanner.InsertOrUpdate(d.files, []string{"Service", "Name", "ModifiedTime", "Data"}, []interface{}{service, name, db.NowProto(), data})
-    txn.BufferWrite([]*spanner.Mutation{m})
+	m := spanner.InsertOrUpdate(d.files, []string{"Service", "Name", "ModifiedTime", "Data"}, []interface{}{service, name, db.NowProto(), data})
+	txn.BufferWrite([]*spanner.Mutation{m})
 }
 
 // StatFile implements db.FileStore.
 func (d *Datastore) StatFile(ctx context.Context, service, name string) (time.Time, error) {
 	log.Error("+++ filestore: StatFile() called")
 
-	row, err := d.dbClient.Single().ReadRow(ctx, d.files, spanner.Key{service, name}, []string{"ModifiedTime"})
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	row, err := txn.ReadRow(ctx, d.files, spanner.Key{service, name}, []string{"ModifiedTime"})
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -74,7 +76,9 @@ func (d *Datastore) StatFile(ctx context.Context, service, name string) (time.Ti
 // ReadFile implements db.FileStore.
 func (d *Datastore) ReadFile(ctx context.Context, service, name string) (data db.ReadSeekerCloser, modtime time.Time, err error) {
 	log.Error("+++ filestore: ReadFile() called")
-	row, err := d.dbClient.Single().ReadRow(ctx, d.files, spanner.Key{service, name}, []string{"ModifiedTime", "Data"})
+	txn := d.dbClient.Single()
+	defer txn.Close()
+	row, err := txn.ReadRow(ctx, d.files, spanner.Key{service, name}, []string{"ModifiedTime", "Data"})
 	if err != nil {
 		return nil, time.Time{}, err
 	}
