@@ -387,7 +387,7 @@ func (d *Datastore) ListClientContacts(ctx context.Context, id common.ClientID) 
 func splitContact(contact db.ContactID) (common.ClientID, int64, error) {
 	s := strings.Split(string(contact), ":")
 	if len(s) != 2 {
-		return common.ClientID{}, 0, fmt.Errorf("Unknown ContactID format: %v", string(contact))
+		return common.ClientID{}, 0, fmt.Errorf("unknown ContactID format: %v", string(contact))
 	}
 	cid, err := common.StringToClientID(s[0])
 	if err != nil {

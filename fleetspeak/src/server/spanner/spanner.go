@@ -22,8 +22,6 @@ import (
 	
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/spanner"
-
-	log "github.com/golang/glog"
 )
 
 // Datastore wraps a mysql backed sql.DB and implements db.Store.
@@ -114,8 +112,5 @@ func initDB(ctx context.Context, projectId, inst, db string) (*spanner.Client, e
 	if err != nil {
 		return nil, err
 	}
-    log.Error("+++ spanner: initDB() connected")
-	log.Error(client.DatabaseName())
-	log.Error(client.ClientID)
 	return client, nil
 }

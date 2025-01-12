@@ -99,22 +99,13 @@ gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --
 echo "14/$ACTIONS : Creating Broadcasts table..."
 gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --ddl='CREATE TABLE Broadcasts(
   BroadcastID BYTES(MAX) NOT NULL AS (Broadcast.broadcast_id) STORED,
-  BroadcastService STRING(MAX) NOT NULL AS (Broadcast.source.service_name) STORED,
-  BroadcastExpirySeconds INT64 NOT NULL AS (Broadcast.expiration_time.seconds) STORED,
-  BroadcastExpiryNanos INT64 NOT NULL AS (Broadcast.expiration_time.nanos) STORED,
   Broadcast `fleetspeak.server.Broadcast` NOT NULL,
   Sent INT64 NOT NULL,
   Allocated INT64 NOT NULL,
   MessageLimit INT64 NOT NULL
 ) PRIMARY KEY(BroadcastID);'
 
-echo "15/$ACTIONS : Creating BroadcastsByService index..."
-gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --ddl='CREATE INDEX BroadcastsByService ON Broadcasts(BroadcastService);'
-
-echo "16/$ACTIONS : Creating BroadcastsByExpiry index..."
-gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --ddl='CREATE INDEX BroadcastsByExpiry ON Broadcasts(BroadcastExpirySeconds, BroadcastExpiryNanos);'
-
-echo "17/$ACTIONS : Creating BroadcastAllocations table..."
+echo "15/$ACTIONS : Creating BroadcastAllocations table..."
 gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --ddl='CREATE TABLE BroadcastAllocations (
   BroadcastID BYTES(MAX) NOT NULL,
   AllocationID BYTES(8) NOT NULL,
@@ -124,14 +115,14 @@ gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --
 ) PRIMARY KEY (BroadcastID, AllocationID),
   INTERLEAVE IN PARENT Broadcasts ON DELETE CASCADE;'
 
-echo "18/$ACTIONS : Creating BroadcastSent table..."
+echo "16/$ACTIONS : Creating BroadcastSent table..."
 gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --ddl='CREATE TABLE BroadcastSent (
   BroadcastID BYTES(MAX) NOT NULL,
   ClientID BYTES(8) NOT NULL
 ) PRIMARY KEY (ClientID, BroadcastID),
   INTERLEAVE IN PARENT Clients;'
 
-echo "19/$ACTIONS : Creating Files table..."
+echo "17/$ACTIONS : Creating Files table..."
 gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --ddl='CREATE TABLE Files (
   Service STRING(128) NOT NULL,
   Name STRING(256) NOT NULL,

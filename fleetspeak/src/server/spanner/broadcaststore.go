@@ -16,8 +16,6 @@ package spanner
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
@@ -29,109 +27,97 @@ import (
 
 	"google.golang.org/api/iterator"
 
-	log "github.com/golang/glog"
-
 	fspb "github.com/google/fleetspeak/fleetspeak/src/common/proto/fleetspeak"
 	spb "github.com/google/fleetspeak/fleetspeak/src/server/proto/fleetspeak_server"
-	anypb "google.golang.org/protobuf/types/known/anypb"
 	tspb "google.golang.org/protobuf/types/known/timestamppb"
 )
-
-// dbBroadcast matches the schema of the broadcasts table.
-type dbBroadcast struct {
-	broadcastID           []byte
-	sourceServiceName     string
-	messageType           string
-	expirationTimeSeconds sql.NullInt64
-	expirationTimeNanos   sql.NullInt64
-	dataTypeURL           sql.NullString
-	dataValue             []byte
-	sent                  uint64
-	allocated             uint64
-	messageLimit          uint64
-}
 
 type broadcast struct {
 	PrimaryKey   *spanner.Key
 	Broadcast    *spb.Broadcast
-	Sent         uint64
-	Allocated    uint64
-	MessageLimit uint64
-}
-
-func fromBroadcastProto(b *spb.Broadcast) (*dbBroadcast, error) {
-	if b == nil {
-		return nil, errors.New("cannot convert nil Broadcast")
-	}
-	id, err := ids.BytesToBroadcastID(b.BroadcastId)
-	if err != nil {
-		return nil, err
-	}
-	if b.Source == nil {
-		return nil, fmt.Errorf("Broadcast must have Source. Get: %v", b)
-	}
-
-	res := dbBroadcast{
-		broadcastID:       id.Bytes(),
-		sourceServiceName: b.Source.ServiceName,
-		messageType:       b.MessageType,
-	}
-	if b.ExpirationTime != nil {
-		res.expirationTimeSeconds = sql.NullInt64{Int64: b.ExpirationTime.Seconds, Valid: true}
-		res.expirationTimeNanos = sql.NullInt64{Int64: int64(b.ExpirationTime.Nanos), Valid: true}
-	}
-	if b.Data != nil {
-		res.dataTypeURL = sql.NullString{String: b.Data.TypeUrl, Valid: true}
-		res.dataValue = b.Data.Value
-	}
-	return &res, nil
-}
-
-func toBroadcastProto(b *dbBroadcast) (*spb.Broadcast, error) {
-	bid, err := ids.BytesToBroadcastID(b.broadcastID)
-	if err != nil {
-		return nil, err
-	}
-	ret := &spb.Broadcast{
-		BroadcastId: bid.Bytes(),
-		Source:      &fspb.Address{ServiceName: b.sourceServiceName},
-		MessageType: b.messageType,
-	}
-	if b.expirationTimeSeconds.Valid && b.expirationTimeNanos.Valid {
-		ret.ExpirationTime = &tspb.Timestamp{
-			Seconds: b.expirationTimeSeconds.Int64,
-			Nanos:   int32(b.expirationTimeNanos.Int64),
-		}
-	}
-	if b.dataTypeURL.Valid {
-		ret.Data = &anypb.Any{
-			TypeUrl: b.dataTypeURL.String,
-			Value:   b.dataValue,
-		}
-	}
-	return ret, nil
+	Sent         int64
+	Allocated    int64
+	MessageLimit int64
 }
 
 // CreateBroadcast implements db.BroadcastStore.
 func (d *Datastore) CreateBroadcast(ctx context.Context, b *spb.Broadcast, limit uint64) error {
-	log.Error("----------- broadcaststore: CreateBroadcast() called")
-	dbB, err := fromBroadcastProto(b)
-	if err != nil {
-		return err
+	br := broadcast{
+		Broadcast:    b,
+		Sent:         0,
+		Allocated:    0,
+		MessageLimit: int64(limit),
 	}
-	dbB.messageLimit = limit
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		return d.tryCreateBroadcast(txn, &br)
+	})
+	return err
+}
+
+func (d *Datastore) tryCreateBroadcast(txn *spanner.ReadWriteTransaction, b *broadcast) error {
+	ms := []*spanner.Mutation{spanner.InsertOrUpdate(d.broadcasts,
+		[]string{"Broadcast", "Sent", "Allocated", "MessageLimit"},
+		[]interface{}{b.Broadcast, b.Sent, b.Allocated, b.MessageLimit})}
+	txn.BufferWrite(ms)
 	return nil
 }
 
 // SetBroadcastLimit implements db.BroadcastStore.
 func (d *Datastore) SetBroadcastLimit(ctx context.Context, id ids.BroadcastID, limit uint64) error {
-	log.Error("----------- broadcaststore: SetBroadcastLimit() called")
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		return d.trySetBroadcastLimit(txn, id, limit)
+	})
+	return err
+}
+
+func (d *Datastore) trySetBroadcastLimit(txn *spanner.ReadWriteTransaction, id ids.BroadcastID, limit uint64) error {
+	ms := []*spanner.Mutation{spanner.Update(d.broadcasts, []string{"BroadcastID", "MessageLimit"}, []interface{}{id.Bytes(), int(limit)})}
+	txn.BufferWrite(ms)
 	return nil
 }
 
 // SaveBroadcastMessage implements db.BroadcastStore.
-func (d *Datastore) SaveBroadcastMessage(ctx context.Context, msg *fspb.Message, bID ids.BroadcastID, cID common.ClientID, aID ids.AllocationID) error {
-    log.Error("----------- broadcaststore: SaveBroadcastMessage() called")
+func (d *Datastore) SaveBroadcastMessage(ctx context.Context, msg *fspb.Message, bid ids.BroadcastID, cid common.ClientID, aid ids.AllocationID) error {
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		return d.trySaveBroadcastMessage(ctx, txn, msg, bid, cid, aid)
+	})
+	return err
+}
+
+func (d *Datastore) trySaveBroadcastMessage(ctx context.Context, txn *spanner.ReadWriteTransaction, msg *fspb.Message, bid ids.BroadcastID, cid common.ClientID, aid ids.AllocationID) error {
+	if err := d.tryStoreMessage(ctx, txn, msg, true); err != nil {
+		return err
+	}
+
+	row, err := txn.ReadRow(ctx, d.broadcastAllocations, spanner.Key{bid.Bytes(), aid.Bytes()}, []string{"Sent", "MessageLimit", "ExpiresTime"})
+	if err != nil {
+		return err
+	}
+
+	var sent int64
+	var messageLimit int64
+	var expiresTime tspb.Timestamp
+    if err := row.Columns(sent, messageLimit, &expiresTime); err != nil {
+		return err
+	}
+
+	if sent >= messageLimit {
+		return fmt.Errorf("SaveBroadcastMessage: broadcast allocation [%v, %v] is full: Sent: %v Limit: %v", aid, bid, sent, messageLimit)
+	}
+	err = expiresTime.CheckValid()
+	if err != nil {
+		return fmt.Errorf("SaveBroadcastMessage: unable to convert ExpiresTime for broadcast allocation %v: %v", bid, err)
+	}
+	exp := expiresTime.AsTime()
+	if db.Now().After(exp) {
+		return fmt.Errorf("SaveBroadcastMessage: broadcast allocation %v is expired: %v", bid, exp)
+	}
+
+	allocationCols := []string{"BroadcastID", "AllocationID", "Sent"}
+	sentCols := []string{"BroadcastID", "ClientID"}
+	ms := []*spanner.Mutation{spanner.Update(d.broadcastAllocations, allocationCols, []interface{}{bid.Bytes(), aid.Bytes(), sent+1})}
+    ms = append(ms, spanner.InsertOrUpdate(d.broadcastSent, sentCols, []interface{}{bid.Bytes(), cid.Bytes()}))
+	txn.BufferWrite(ms)
 	return nil
 }
 
@@ -168,21 +154,20 @@ func (d *Datastore) ListActiveBroadcasts(ctx context.Context) ([]*db.BroadcastIn
 			return ret, err
 		}
 		var broadcast *spb.Broadcast
-		var sent, messageLimit uint64
+		var sent, messageLimit int64
 		if err := row.Columns(&broadcast, &sent, &messageLimit); err != nil {
 			return ret, err
 		}
 		ret = append(ret, &db.BroadcastInfo{
 			Broadcast: broadcast,
-			Sent:      sent,
-			Limit:     messageLimit,
+			Sent:      uint64(sent),
+			Limit:     uint64(messageLimit),
 		})
 	}
 }
 
 // ListSentBroadcasts implements db.BroadcastStore.
 func (d *Datastore) ListSentBroadcasts(ctx context.Context, id common.ClientID) ([]ids.BroadcastID, error) {
-	log.Error("+++ broadcaststore: ListSentBroadcasts() called")
 	var res []ids.BroadcastID
 	ro := d.dbClient.ReadOnlyTransaction()
 	defer ro.Close()
@@ -212,13 +197,97 @@ func (d *Datastore) ListSentBroadcasts(ctx context.Context, id common.ClientID) 
 
 // CreateAllocation implements db.BroadcastStore.
 func (d *Datastore) CreateAllocation(ctx context.Context, id ids.BroadcastID, frac float32, expiry time.Time) (*db.AllocationInfo, error) {
-	log.Error("----------- broadcaststore: CreateAllocation() called")
 	var ret *db.AllocationInfo
-	return ret, nil
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		var err error
+		ret, err = d.tryCreateAllocation(ctx, txn, id, frac, expiry)
+		return err
+	})
+	return ret, err
+}
+
+func (d *Datastore) tryCreateAllocation(ctx context.Context, txn *spanner.ReadWriteTransaction, id ids.BroadcastID, frac float32, expiry time.Time) (*db.AllocationInfo, error) {
+	ep := tspb.New(expiry)
+	err := ep.CheckValid()
+	if err != nil {
+		return nil, err
+	}
+
+	aid, err := ids.RandomAllocationID()
+	if err != nil {
+		return nil, err
+	}
+
+	row, err := txn.ReadRow(ctx, d.broadcasts, spanner.Key{id.Bytes()}, []string{"Sent", "Allocated", "MessageLimit"})
+	if err != nil {
+		return nil, err
+	}
+
+	var sent int64
+	var allocated int64
+	var messageLimit int64
+    if err := row.Columns(sent, allocated, messageLimit); err != nil {
+		return nil, err
+	}
+
+	toAllocate, newAllocated := db.ComputeBroadcastAllocation(uint64(messageLimit), uint64(allocated), uint64(sent), frac)
+
+	if toAllocate == 0 {
+		return nil, nil
+	}
+
+	ai := &db.AllocationInfo{
+		ID:     aid,
+		Limit:  toAllocate,
+		Expiry: expiry,
+	}
+
+	broadcastCols := []string{"BroadcastID", "Allocated"}
+	allocationCols := []string{"BroadcastID", "AllocationID", "Sent", "MessageLimit", "ExpiresTime"}
+	ms := []*spanner.Mutation{spanner.Update(d.broadcasts, broadcastCols, []interface{}{id.Bytes(), int64(newAllocated)})}
+    ms = append(ms, spanner.InsertOrUpdate(d.broadcastAllocations, allocationCols, []interface{}{id.Bytes(), aid.Bytes(), 0, int64(toAllocate), ep}))
+	txn.BufferWrite(ms)
+
+	return ai, nil
 }
 
 // CleanupAllocation implements db.BroadcastStore.
-func (d *Datastore) CleanupAllocation(ctx context.Context, bID ids.BroadcastID, aID ids.AllocationID) error {
-	log.Error("----------- broadcaststore: CleanupAllocation() called")
+func (d *Datastore) CleanupAllocation(ctx context.Context, bid ids.BroadcastID, aid ids.AllocationID) error {
+	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
+		return d.tryCleanupAllocation(ctx, txn, bid, aid)
+	})
+	return err
+}
+
+func (d *Datastore) tryCleanupAllocation(ctx context.Context, txn *spanner.ReadWriteTransaction, bid ids.BroadcastID, aid ids.AllocationID) error {
+
+	row, err := txn.ReadRow(ctx, d.broadcasts, spanner.Key{bid.Bytes()}, []string{"Allocated", "Sent"})
+	if err != nil {
+		return err
+	}
+	var allocated, bSent uint64
+	if err := row.Columns(allocated, bSent); err != nil {
+		return err
+	}
+
+	row, err = txn.ReadRow(ctx, d.broadcastAllocations, spanner.Key{bid.Bytes(), aid.Bytes()}, []string{"MessageLimit", "Sent"})
+	if err != nil {
+		return err
+	}
+	var messageLimit, baSent uint64
+	if err := row.Columns(messageLimit, baSent); err != nil {
+		return err
+	}
+
+	newAllocated, err := db.ComputeBroadcastAllocationCleanup(messageLimit, allocated)
+	if err != nil {
+		return fmt.Errorf("unable to clear allocation [%v,%v]: %v", bid, aid, err)
+	}
+
+	broadcastCols := []string{"BroadcastID", "Allocated", "Sent"}
+	ms := []*spanner.Mutation{spanner.Update(d.broadcasts, broadcastCols, []interface{}{bid.Bytes(), newAllocated, bSent+baSent})}
+    ms = append(ms, spanner.Delete(d.broadcastAllocations, spanner.Key{bid.Bytes(), aid.Bytes()}))
+	txn.BufferWrite(ms)
+
 	return nil
 }

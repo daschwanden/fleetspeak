@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"cloud.google.com/go/pubsub"
@@ -33,7 +32,6 @@ import (
 	"github.com/google/fleetspeak/fleetspeak/src/server/db"
 
 	fspb "github.com/google/fleetspeak/fleetspeak/src/common/proto/fleetspeak"
-	"google.golang.org/protobuf/proto"
 	anypb "google.golang.org/protobuf/types/known/anypb"
 )
 
@@ -133,141 +131,6 @@ func (d *Datastore) trySetMessageResult(txn *spanner.ReadWriteTransaction, cid c
 	}
 	txn.BufferWrite(ms)
 	return nil
-}
-
-func fromNULLString(s sql.NullString) string {
-	if !s.Valid {
-		return ""
-	}
-	return s.String
-}
-
-func fromMessageProto(m *fspb.Message) (*dbMessage, error) {
-	id, err := common.BytesToMessageID(m.MessageId)
-	if err != nil {
-		return nil, err
-	}
-	dbm := &dbMessage{
-		messageID:   id.Bytes(),
-		messageType: m.MessageType,
-	}
-	if m.Source != nil {
-		dbm.sourceClientID = m.Source.ClientId
-		dbm.sourceServiceName = m.Source.ServiceName
-	}
-	if m.Destination != nil {
-		dbm.destinationClientID = m.Destination.ClientId
-		dbm.destinationServiceName = m.Destination.ServiceName
-	}
-	if len(m.SourceMessageId) != 0 {
-		dbm.sourceMessageID = m.SourceMessageId
-	}
-	if m.CreationTime != nil {
-		dbm.creationTimeSeconds = m.CreationTime.Seconds
-		dbm.creationTimeNanos = m.CreationTime.Nanos
-	}
-	if m.Result != nil {
-		r := m.Result
-		if r.ProcessedTime != nil {
-			dbm.processedTimeSeconds = sql.NullInt64{Int64: r.ProcessedTime.Seconds, Valid: true}
-			dbm.processedTimeNanos = sql.NullInt64{Int64: int64(r.ProcessedTime.Nanos), Valid: true}
-		}
-		if r.Failed {
-			dbm.failed = sql.NullBool{Bool: true, Valid: true}
-			dbm.failedReason = sql.NullString{String: r.FailedReason, Valid: true}
-		}
-	}
-	if m.Data != nil {
-		dbm.dataTypeURL = sql.NullString{String: m.Data.TypeUrl, Valid: true}
-		dbm.dataValue = m.Data.Value
-	}
-	if m.ValidationInfo != nil {
-		b, err := proto.Marshal(m.ValidationInfo)
-		if err != nil {
-			return nil, err
-		}
-		dbm.validationInfo = b
-	}
-	if m.Annotations != nil {
-		b, err := proto.Marshal(m.Annotations)
-		if err != nil {
-			return nil, err
-		}
-		dbm.annotations = b
-	}
-	return dbm, nil
-}
-
-func toMessageResultProto(m *dbMessage) *fspb.MessageResult {
-	if !m.processedTimeSeconds.Valid {
-		return nil
-	}
-
-	ret := &fspb.MessageResult{
-		ProcessedTime: &tspb.Timestamp{
-			Seconds: m.processedTimeSeconds.Int64,
-			Nanos:   int32(m.processedTimeNanos.Int64)},
-		Failed: m.failed.Valid && m.failed.Bool,
-	}
-
-	if m.failedReason.Valid {
-		ret.FailedReason = m.failedReason.String
-	}
-	return ret
-}
-
-func toMessageProto(m *dbMessage) (*fspb.Message, error) {
-	mid, err := common.BytesToMessageID(m.messageID)
-	if err != nil {
-		return nil, err
-	}
-	pm := &fspb.Message{
-		MessageId: mid.Bytes(),
-		Source: &fspb.Address{
-			ClientId:    m.sourceClientID,
-			ServiceName: m.sourceServiceName,
-		},
-		SourceMessageId: m.sourceMessageID,
-		Destination: &fspb.Address{
-			ClientId:    m.destinationClientID,
-			ServiceName: m.destinationServiceName,
-		},
-		MessageType: m.messageType,
-		CreationTime: &tspb.Timestamp{
-			Seconds: m.creationTimeSeconds,
-			Nanos:   m.creationTimeNanos,
-		},
-		Result: toMessageResultProto(m),
-	}
-	if m.dataTypeURL.Valid {
-		pm.Data = &anypb.Any{
-			TypeUrl: m.dataTypeURL.String,
-			Value:   m.dataValue,
-		}
-	}
-	if len(m.validationInfo) > 0 {
-		v := &fspb.ValidationInfo{}
-		if err := proto.Unmarshal(m.validationInfo, v); err != nil {
-			return nil, err
-		}
-		pm.ValidationInfo = v
-	}
-	if len(m.annotations) > 0 {
-		a := &fspb.Annotations{}
-		if err := proto.Unmarshal(m.annotations, a); err != nil {
-			return nil, err
-		}
-		pm.Annotations = a
-	}
-	return pm, nil
-}
-
-func genPlaceholders(num int) string {
-	es := make([]string, num)
-	for i := range es {
-		es[i] = "?"
-	}
-	return strings.Join(es, ", ")
 }
 
 // GetPendingMessageCount implements db.MessageStore.
