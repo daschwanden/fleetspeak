@@ -1,4 +1,4 @@
-// Copyright 2024 Google Inc.
+// Copyright 2025 Google Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,14 +24,11 @@ import (
 
 	"github.com/google/fleetspeak/fleetspeak/src/server/db"
 
-	log "github.com/golang/glog"
-
 	tpb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // StoreFile implements db.FileStore.
 func (d *Datastore) StoreFile(ctx context.Context, service, name string, data io.Reader) error {
-	log.Error("+++ filestore: StoreFile() called")
 	b, err := io.ReadAll(data)
 	if err != nil {
 		return err
@@ -51,8 +48,6 @@ func (d *Datastore) tryStoreFile(txn *spanner.ReadWriteTransaction, service, nam
 
 // StatFile implements db.FileStore.
 func (d *Datastore) StatFile(ctx context.Context, service, name string) (time.Time, error) {
-	log.Error("+++ filestore: StatFile() called")
-
 	txn := d.dbClient.Single()
 	defer txn.Close()
 	row, err := txn.ReadRow(ctx, d.files, spanner.Key{service, name}, []string{"ModifiedTime"})
@@ -75,7 +70,6 @@ func (d *Datastore) StatFile(ctx context.Context, service, name string) (time.Ti
 
 // ReadFile implements db.FileStore.
 func (d *Datastore) ReadFile(ctx context.Context, service, name string) (data db.ReadSeekerCloser, modtime time.Time, err error) {
-	log.Error("+++ filestore: ReadFile() called")
 	txn := d.dbClient.Single()
 	defer txn.Close()
 	row, err := txn.ReadRow(ctx, d.files, spanner.Key{service, name}, []string{"ModifiedTime", "Data"})

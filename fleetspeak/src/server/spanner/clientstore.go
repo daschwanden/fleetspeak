@@ -1,4 +1,4 @@
-// Copyright 2024 Google Inc.
+// Copyright 2025 Google Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -64,7 +64,6 @@ func uint64ToBytes(i uint64) []byte {
 
 // StreamClientIds implements db.Store.
 func (d *Datastore) StreamClientIds(ctx context.Context, includeBlacklisted bool, lastContactAfter *time.Time, callback func(common.ClientID) error) error {
-	log.Error("+++ clientstore: StreamClientIds() called")
 	query := "SELECT t.ClientID FROM Clients AS t"
 	var params map[string]interface{}
 	switch {
@@ -117,18 +116,15 @@ func (d *Datastore) StreamClientIds(ctx context.Context, includeBlacklisted bool
 
 // ListClients implements db.Store.
 func (d *Datastore) ListClients(ctx context.Context, ids []common.ClientID) ([]*spb.Client, error) {
-	log.Error("+++ clientstore: ListClients() called")
 	var res []*spb.Client
 	labels := make(map[string][]*fspb.Label)
 	clientKeySet := spanner.KeySets()
 	labelKeySet := spanner.KeySets()
 	if len(ids) == 0 {
-		log.Error("+++ clientstore: ListClients() len(ids) == 0")
 		clientKeySet = spanner.AllKeys()
 		labelKeySet = spanner.AllKeys()
 	} else {
 		for _, id := range ids {
-			log.Errorf("+++ clientstore: ListClients() id = %v", id)
 			clientKeySet = spanner.KeySets(spanner.KeySets(spanner.Key{id.Bytes()}, clientKeySet))
 			labelKeySet = spanner.KeySets(spanner.KeySets(spanner.Key{id.Bytes()}.AsPrefix(), labelKeySet))
 		}
@@ -207,7 +203,6 @@ func (d *Datastore) ListClients(ctx context.Context, ids []common.ClientID) ([]*
 
 // GetClientData implements db.Store.
 func (d *Datastore) GetClientData(ctx context.Context, id common.ClientID) (*db.ClientData, error) {
-	log.Error("+++ clientstore: GetClientData() called")
 	var cd *db.ClientData
 
 	txn := d.dbClient.ReadOnlyTransaction()
@@ -245,7 +240,6 @@ func (d *Datastore) GetClientData(ctx context.Context, id common.ClientID) (*db.
 
 // AddClient implements db.Store.
 func (d *Datastore) AddClient(ctx context.Context, id common.ClientID, data *db.ClientData) error {
-	log.Error("+++ clientstore: AddClient() called")
 	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		return d.tryAddClient(txn, id, data)
 	})
@@ -266,7 +260,6 @@ func (d *Datastore) tryAddClient(txn *spanner.ReadWriteTransaction, id common.Cl
 
 // AddClientLabel implements db.Store.
 func (d *Datastore) AddClientLabel(ctx context.Context, id common.ClientID, label *fspb.Label) error {
-	log.Error("+++ clientstore: AddClientLabel() called")
 	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		return d.tryAddClientLabel(txn, id, label)
 	})
@@ -281,7 +274,6 @@ func (d *Datastore) tryAddClientLabel(tr *spanner.ReadWriteTransaction, id commo
 
 // RemoveClientLabel implements db.Store.
 func (d *Datastore) RemoveClientLabel(ctx context.Context, id common.ClientID, label *fspb.Label) error {
-	log.Error("+++ clientstore: RemoveClientLabel() called")
 	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		return d.tryRemoveClientLabel(txn, id, label)
 	})
@@ -296,7 +288,6 @@ func (d *Datastore) tryRemoveClientLabel(tr *spanner.ReadWriteTransaction, id co
 
 // BlacklistClient implements db.Store.
 func (d *Datastore) BlacklistClient(ctx context.Context, id common.ClientID) error {
-	log.Error("+++ clientstore: BlacklistClient() called")
 	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		return d.tryBlacklistClient(txn, id)
 	})
@@ -311,7 +302,6 @@ func (d *Datastore) tryBlacklistClient(txn *spanner.ReadWriteTransaction, id com
 
 // RecordClientContact implements db.Store.
 func (d *Datastore) RecordClientContact(ctx context.Context, data db.ContactData) (db.ContactID, error) {
-	log.Error("+++ clientstore: RecordClientContact() called")
 	ts, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		return d.tryRecordClientContact(txn, data)
 	})
@@ -338,7 +328,6 @@ func (d *Datastore) tryRecordClientContact(txn *spanner.ReadWriteTransaction, da
 
 // StreamClientContacts implements db.Store.
 func (d *Datastore) StreamClientContacts(ctx context.Context, id common.ClientID, callback func(*spb.ClientContact) error) error {
-	log.Error("+++ clientstore: StreamClientContacts() called")
 	iter := d.dbClient.Single().Read(ctx, d.clientContacts, spanner.Key{id.Bytes()}.AsPrefix(),
 		[]string{"Time", "SentNonce", "ReceivedNonce", "Address"})
 	defer iter.Stop()
@@ -386,7 +375,6 @@ func (d *Datastore) StreamClientContacts(ctx context.Context, id common.ClientID
 
 // ListClientContacts implements db.Store.
 func (d *Datastore) ListClientContacts(ctx context.Context, id common.ClientID) ([]*spb.ClientContact, error) {
-	log.Error("+++ clientstore: ListClientContacts() called")
 	var res []*spb.ClientContact
 	callback := func(c *spb.ClientContact) error {
 		res = append(res, c)
@@ -414,7 +402,6 @@ func splitContact(contact db.ContactID) (common.ClientID, int64, error) {
 
 // LinkMessagesToContact implements db.Store.
 func (d *Datastore) LinkMessagesToContact(ctx context.Context, contact db.ContactID, ids []common.MessageID) error {
-	log.Error("+++ clientstore: LinkMessagesToContact() called")
 	if len(ids) == 0 {
 		return nil
 	}
@@ -429,7 +416,6 @@ func (d *Datastore) LinkMessagesToContact(ctx context.Context, contact db.Contac
 }
 
 func (d *Datastore) tryLinkMessagesToContact(tr *spanner.ReadWriteTransaction, cid common.ClientID, ts int64, ids []common.MessageID) error {
-	log.Error("+++ clientstore: tryLinkMessagesToContact() called")
 	bcid := cid.Bytes()
 	sts := time.UnixMicro(ts)
 	var ms []*spanner.Mutation
@@ -443,7 +429,6 @@ func (d *Datastore) tryLinkMessagesToContact(tr *spanner.ReadWriteTransaction, c
 
 // RecordResourceUsageData implements db.Store.
 func (d *Datastore) RecordResourceUsageData(ctx context.Context, id common.ClientID, rud *mpb.ResourceUsageData) error {
-	log.Error("+++ clientstore: RecordResourceUsageData() called")
 	_, err := d.dbClient.ReadWriteTransaction(ctx, func(ctx context.Context, txn *spanner.ReadWriteTransaction) error {
 		return d.tryRecordResourceUsageData(txn, id, rud)
 	})
@@ -474,7 +459,6 @@ func (d *Datastore) tryRecordResourceUsageData(tr *spanner.ReadWriteTransaction,
 
 // FetchResourceUsageRecords implements db.Store.
 func (d *Datastore) FetchResourceUsageRecords(ctx context.Context, id common.ClientID, startTimestamp, endTimestamp *tspb.Timestamp) ([]*spb.ClientResourceUsageRecord, error) {
-	log.Error("+++ clientstore: FetchResourceUsageRecords() called")
 	if err := startTimestamp.CheckValid(); err != nil {
 		return nil, fmt.Errorf("startTimestamp %v is not valid: %v", startTimestamp, err)
 	}
@@ -525,11 +509,4 @@ func (d *Datastore) FetchResourceUsageRecords(ctx context.Context, id common.Cli
 		records = append(records, record)
 	}
 	return records, nil
-}
-
-func timestampProto(nanos int64) *tspb.Timestamp {
-	return &tspb.Timestamp{
-		Seconds: nanos / time.Second.Nanoseconds(),
-		Nanos:   int32(nanos % time.Second.Nanoseconds()),
-	}
 }
