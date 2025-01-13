@@ -120,7 +120,7 @@ gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --
   BroadcastID BYTES(MAX) NOT NULL,
   ClientID BYTES(8) NOT NULL
 ) PRIMARY KEY (ClientID, BroadcastID),
-  INTERLEAVE IN PARENT Clients;'
+  INTERLEAVE IN PARENT Clients ON DELETE CASCADE;'
 
 echo "17/$ACTIONS : Creating Files table..."
 gcloud spanner databases ddl update fleetspeak --instance fleetspeak-instance --ddl='CREATE TABLE Files (

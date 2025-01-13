@@ -97,7 +97,7 @@ func (d *Datastore) trySaveBroadcastMessage(ctx context.Context, txn *spanner.Re
 	var sent int64
 	var messageLimit int64
 	var expiresTime tspb.Timestamp
-    if err := row.Columns(sent, messageLimit, &expiresTime); err != nil {
+    if err := row.Columns(&sent, &messageLimit, &expiresTime); err != nil {
 		return err
 	}
 
@@ -226,7 +226,7 @@ func (d *Datastore) tryCreateAllocation(ctx context.Context, txn *spanner.ReadWr
 	var sent int64
 	var allocated int64
 	var messageLimit int64
-    if err := row.Columns(sent, allocated, messageLimit); err != nil {
+    if err := row.Columns(&sent, &allocated, &messageLimit); err != nil {
 		return nil, err
 	}
 
@@ -265,8 +265,8 @@ func (d *Datastore) tryCleanupAllocation(ctx context.Context, txn *spanner.ReadW
 	if err != nil {
 		return err
 	}
-	var allocated, bSent uint64
-	if err := row.Columns(allocated, bSent); err != nil {
+	var allocated, bSent int64
+	if err := row.Columns(&allocated, &bSent); err != nil {
 		return err
 	}
 
@@ -274,18 +274,18 @@ func (d *Datastore) tryCleanupAllocation(ctx context.Context, txn *spanner.ReadW
 	if err != nil {
 		return err
 	}
-	var messageLimit, baSent uint64
-	if err := row.Columns(messageLimit, baSent); err != nil {
+	var messageLimit, baSent int64
+	if err := row.Columns(&messageLimit, &baSent); err != nil {
 		return err
 	}
 
-	newAllocated, err := db.ComputeBroadcastAllocationCleanup(messageLimit, allocated)
+	newAllocated, err := db.ComputeBroadcastAllocationCleanup(uint64(messageLimit), uint64(allocated))
 	if err != nil {
 		return fmt.Errorf("unable to clear allocation [%v,%v]: %v", bid, aid, err)
 	}
 
 	broadcastCols := []string{"BroadcastID", "Allocated", "Sent"}
-	ms := []*spanner.Mutation{spanner.Update(d.broadcasts, broadcastCols, []interface{}{bid.Bytes(), newAllocated, bSent+baSent})}
+	ms := []*spanner.Mutation{spanner.Update(d.broadcasts, broadcastCols, []interface{}{bid.Bytes(), int64(newAllocated), bSent+baSent})}
     ms = append(ms, spanner.Delete(d.broadcastAllocations, spanner.Key{bid.Bytes(), aid.Bytes()}))
 	txn.BufferWrite(ms)
 
