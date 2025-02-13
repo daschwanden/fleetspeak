@@ -38,11 +38,10 @@ jobs:
           cd -
       - name: 'Start Spanner emulator'
         run: |
-          gcloud config configurations create emulator
+          gcloud config configurations create emulator --universe-domain
           gcloud config set auth/disable_credentials true
           gcloud config set project ${{ env.SPANNER_PROJECT }}
           gcloud config set api_endpoint_overrides/spanner http://localhost:9020/
-          gcloud config configurations activate emulator
           gcloud spanner instances create ${{ env.SPANNER_INSTANCE }} \
             --config=emulator-config --description="Spanner Test Instance" --nodes=1
           sudo apt-get update
