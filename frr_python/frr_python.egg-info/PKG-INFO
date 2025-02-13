@@ -1,0 +1,8 @@
+Metadata-Version: 2.1
+Name: frr-python
+Version: 0.0.0
+Summary: Frr server and client services
+Home-page: https://github.com/google/fleetspeak/tree/master/frr_python
+Maintainer: GRR Development Team
+Maintainer-email: grr-dev@googlegroups.com
+License: Apache License, Version 2.0

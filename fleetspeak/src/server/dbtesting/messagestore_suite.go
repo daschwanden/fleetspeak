@@ -306,7 +306,7 @@ func clientMessagesForProcessingLimitTest(t *testing.T, ms db.Store) {
 		t.Fatalf("ClientMessagesForProcessing(10, nil) returned unexpected error: %v", err)
 	}
 	if len(m) != 0 {
-		t.Fatalf("Exepcted 0 messages, got %v.", len(m))
+		t.Fatalf("Expected 0 messages, got %v.", len(m))
 	}
 }
 

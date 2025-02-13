@@ -1,0 +1,31 @@
+services:
+
+  fleetspeak-server:
+    image: fleetspeak:spanner
+    hostname: fleetspeak-frontend
+    entrypoint: ["/fleetspeak/bin/server", "-components_config", "/config/fleetspeak-server/components.textproto", "-services_config", "/config/fleetspeak-server/services.textproto", "-alsologtostderr"]
+    volumes:
+      - "./config:/config"
+      - "/home/user/.config/gcloud/:/root/.config/gcloud"
+    ports:
+      - '9090:9090'
+      - '9091:9091'
+      - '8080:8080'
+    expose:
+      - '9090'
+      - '9091'
+      - '8080'
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:8080"]
+      timeout: 5s
+      retries: 10
+
+  fleetspeak-client:
+    image: fleetspeak:spanner
+    hostname: fleetspeak-client
+    depends_on:
+      fleetspeak-server:
+        condition: service_healthy
+    entrypoint: ["/fleetspeak/bin/client", "-config", "/config/fleetspeak-client/config.textproto", "-alsologtostderr"]
+    volumes:
+      - "./config:/config"
