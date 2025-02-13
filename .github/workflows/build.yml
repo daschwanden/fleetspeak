@@ -38,8 +38,6 @@ jobs:
           cd -
       - name: 'Start Spanner emulator'
         run: |
-          gcloud components install
-          gcloud components update
           gcloud config configurations create emulator
           gcloud config set auth/disable_credentials true
           gcloud config set project ${{ env.SPANNER_PROJECT }}
