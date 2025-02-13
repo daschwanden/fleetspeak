@@ -24,7 +24,7 @@ jobs:
           sudo /etc/init.d/mysql start
           mysql -e 'CREATE DATABASE ${{ env.MYSQL_TEST_E2E_DB }};' -u${{ env.MYSQL_TEST_USER }} -p${{ env.MYSQL_TEST_PASS }}
       - name: 'Install Cloud SDK'
-        uses: google-github-actions/setup-gcloud@v0
+        uses: google-github-actions/setup-gcloud@v2
         with:
           install_components: 'beta,pubsub-emulator'
       - name: 'Start Pub/Sub emulator'
@@ -38,7 +38,7 @@ jobs:
           cd -
       - name: 'Start Spanner emulator'
         run: |
-          gcloud config configurations create emulator --universe-domain emulator-domain
+          gcloud config configurations create emulator
           gcloud config set auth/disable_credentials true
           gcloud config set project ${{ env.SPANNER_PROJECT }}
           gcloud config set api_endpoint_overrides/spanner http://localhost:9020/
