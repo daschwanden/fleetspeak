@@ -48,7 +48,7 @@ jobs:
           sudo apt-get update
           sudo apt install -y protobuf-compiler libprotobuf-dev
           protoc -I=. -I=/usr/include --include_imports --descriptor_set_out=./spanner-setup/fleetspeak.pb ./fleetspeak/src/common/proto/fleetspeak/common.proto ./fleetspeak/src/server/proto/fleetspeak_server/broadcasts.proto ./fleetspeak/src/server/proto/fleetspeak_server/resource.proto
-          bash ./setup-spanner/setup.sh
+          bash ./spanner-setup/setup.sh
       - uses: actions/setup-go@v3
         with:
           go-version: '1.22'
